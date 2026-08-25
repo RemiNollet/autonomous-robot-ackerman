@@ -1,0 +1,16 @@
+# VM-side dependencies (Ubuntu, ROS2 Kilted)
+# venv: ~/venvs/ackerman_ros2, created with --system-site-packages
+#   (required so rclpy, installed via apt, remains importable inside the venv)
+#
+# ROS2 itself (rclpy, ament tooling, etc.) comes from apt, not pip —
+# not listed here. This file covers only what pip installs into the venv.
+
+empy==3.3.4
+# rosidl_adapter (ROS2's .msg -> IDL converter) imports this at build time.
+# Without it, `colcon build` fails on any package with custom interfaces:
+#   ModuleNotFoundError: No module named 'em'
+# Must be empy, not the unrelated PyPI package named `em`.
+# empy 4.x changed its API and breaks current rosidl tooling — pin to 3.3.4.
+
+pytest
+numpy
