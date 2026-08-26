@@ -1,0 +1,87 @@
+<mujoco model="carsim_v0">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002" integrator="implicitfast"/>
+
+  <default>
+    <default class="wheel">
+      <geom type="cylinder" size="0.055 0.022" euler="1.5708 0 0"
+            rgba="0.15 0.15 0.15 1" mass="0.25" friction="1.5 0.005 0.0001"/>
+    </default>
+    <default class="steer">
+      <joint type="hinge" axis="0 0 1" range="-0.6 0.6" damping="0.4"/>
+    </default>
+    <default class="roll">
+      <joint type="hinge" axis="0 1 0" damping="0.005"/>
+    </default>
+  </default>
+
+  <asset>
+    <texture name="sky" type="skybox" builtin="gradient"
+             rgb1="0.45 0.65 0.9" rgb2="0.9 0.95 1.0" width="256" height="256"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.25 0.25 0.27"
+             rgb2="0.32 0.32 0.35" width="512" height="512"/>
+    <material name="grid" texture="grid" texrepeat="30 30" reflectance="0.05"/>
+    <material name="lane" rgba="0.95 0.95 0.95 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 6" dir="0 0 -1" diffuse="0.9 0.9 0.9" specular="0.1 0.1 0.1"/>
+    <geom name="floor" type="plane" size="40 40 0.1" material="grid"/>
+
+    <!-- bandes de voie: cible triviale pour la perception v0 -->
+    <geom name="lane_l" type="box" pos="0 0.9 0.001" size="30 0.05 0.001" material="lane"/>
+    <geom name="lane_r" type="box" pos="0 -0.9 0.001" size="30 0.05 0.001" material="lane"/>
+
+    <body name="chassis" pos="0 0 0.075">
+      <freejoint name="root"/>
+      <geom name="body" type="box" size="0.17 0.065 0.028" rgba="0.75 0.2 0.2 1" mass="2.0"/>
+      <site name="imu" pos="0 0 0" size="0.01"/>
+      <camera name="cam_front" pos="0.16 0 0.05" xyaxes="0 -1 0  0.3 0 0.95" fovy="75"/>
+
+      <body name="steer_fl" pos="0.13 0.105 -0.02">
+        <joint class="steer" name="steer_fl"/>
+        <inertial pos="0 0 0" mass="0.05" diaginertia="1e-4 1e-4 1e-4"/>
+        <body name="wheel_fl">
+          <joint class="roll" name="roll_fl"/>
+          <geom class="wheel"/>
+        </body>
+      </body>
+      <body name="steer_fr" pos="0.13 -0.105 -0.02">
+        <joint class="steer" name="steer_fr"/>
+        <inertial pos="0 0 0" mass="0.05" diaginertia="1e-4 1e-4 1e-4"/>
+        <body name="wheel_fr">
+          <joint class="roll" name="roll_fr"/>
+          <geom class="wheel"/>
+        </body>
+      </body>
+
+      <body name="wheel_rl" pos="-0.13 0.105 -0.02">
+        <joint class="roll" name="roll_rl"/>
+        <geom class="wheel"/>
+      </body>
+      <body name="wheel_rr" pos="-0.13 -0.105 -0.02">
+        <joint class="roll" name="roll_rr"/>
+        <geom class="wheel"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <exclude body1="chassis" body2="wheel_fl"/>
+    <exclude body1="chassis" body2="wheel_fr"/>
+  </contact>
+
+  <actuator>
+    <position name="a_steer_fl" joint="steer_fl" kp="15" kv="0.5" ctrlrange="-0.6 0.6"/>
+    <position name="a_steer_fr" joint="steer_fr" kp="15" kv="0.5" ctrlrange="-0.6 0.6"/>
+    <motor    name="a_drive_rl" joint="roll_rl" gear="1" ctrlrange="-3 3"/>
+    <motor    name="a_drive_rr" joint="roll_rr" gear="1" ctrlrange="-3 3"/>
+  </actuator>
+
+  <sensor>
+    <framepos    name="s_pos"  objtype="body" objname="chassis"/>
+    <framequat   name="s_quat" objtype="body" objname="chassis"/>
+    <velocimeter name="s_vel"  site="imu"/>
+    <gyro        name="s_gyro" site="imu"/>
+  </sensor>
+</mujoco>
