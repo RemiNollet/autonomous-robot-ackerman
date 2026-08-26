@@ -76,12 +76,18 @@ def _track_bounds(track: Track, margin: float):
     return (min(xs) - margin, max(xs) + margin, min(ys) - margin, max(ys) + margin)
 
 
-def generate_track_mjcf(track: Track, lane_half_width: float) -> str:
+def generate_lane_marking_geoms(track: Track, lane_half_width: float) -> str:
+    """Just the marking <geom> elements, for splicing into an existing
+    worldbody (e.g. the vehicle scene) rather than a standalone document."""
     left_pts = _sample_boundary(track, +1.0, lane_half_width, SAMPLE_SPACING)
     right_pts = _sample_boundary(track, -1.0, lane_half_width, SAMPLE_SPACING)
-
     left_geoms = _segment_geoms(left_pts, "lane_left")
     right_geoms = _segment_geoms(right_pts, "lane_right")
+    return left_geoms + "\n    " + right_geoms
+
+
+def generate_track_mjcf(track: Track, lane_half_width: float) -> str:
+    left_geoms_and_right = generate_lane_marking_geoms(track, lane_half_width)
 
     x0, x1, y0, y1 = _track_bounds(track, ROAD_MARGIN)
     cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
@@ -101,8 +107,7 @@ def generate_track_mjcf(track: Track, lane_half_width: float) -> str:
   <worldbody>
     <geom name="road_surface" type="plane" pos="{cx:.3f} {cy:.3f} 0"
           size="{hx:.3f} {hy:.3f} 0.01" rgba="0.25 0.25 0.25 1"/>
-    {left_geoms}
-    {right_geoms}
+    {left_geoms_and_right}
   </worldbody>
 </mujoco>
 """
