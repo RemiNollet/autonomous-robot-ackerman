@@ -13,8 +13,11 @@ normal, sampled at fixed arc-length intervals. This approximates a curve
 with straight sub-segments, which is standard practice in MJCF since there
 is no native curved-strip primitive.
 """
-
+import sys
 import math
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 from perception.dataset.geometry import Track, wrap_to_pi
 
 SAMPLE_SPACING = 0.2   # m, spacing between polyline samples along each boundary
