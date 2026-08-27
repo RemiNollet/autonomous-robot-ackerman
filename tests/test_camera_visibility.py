@@ -5,7 +5,7 @@ The important one is test_matches_mujoco_extrinsics: the visibility filter
 uses an analytic camera transform rather than calling MuJoCo, so that the
 dataset generator stays headless and fast. That is only safe as long as the
 analytic model provably agrees with the simulator. If cam_front's pose or
-fovy changes in sim/model/car.xml, this test fails and the constants in
+fovy changes in sim/models/car.xml, this test fails and the constants in
 camera_visibility.py must be updated to match.
 
 Skipped automatically when MuJoCo or the model file is unavailable.
@@ -24,7 +24,7 @@ from perception.dataset.camera_visibility import (
 )
 from perception.dataset.track_definitions import REFERENCE_TRACK, LANE_HALF_WIDTH
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "sim", "model", "car.xml")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "sim", "models", "car.xml")
 
 
 @pytest.mark.skipif(
@@ -60,7 +60,7 @@ def test_matches_mujoco_extrinsics():
 
     assert max_err < 1e-9, (
         f"analytic camera model diverged from MuJoCo by {max_err:.2e} m — "
-        f"check CAM_* constants against sim/model/car.xml"
+        f"check CAM_* constants against sim/models/car.xml"
     )
 
 

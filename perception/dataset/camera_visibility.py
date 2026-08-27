@@ -11,7 +11,7 @@ left the camera frame entirely. The labels were arithmetically correct
 this module answers the question directly and the generator uses it as a
 rejection filter.
 
-Camera parameters are hard-coded from sim/model/car.xml and verified
+Camera parameters are hard-coded from sim/models/car.xml and verified
 against MuJoCo's computed extrinsics in tests/test_camera_visibility.py.
 If cam_front's pose or fovy changes in the MJCF, that test fails and
 these constants must be updated to match.
@@ -20,7 +20,7 @@ these constants must be updated to match.
 import math
 from perception.dataset.geometry import Track
 
-# --- Camera parameters, from sim/model/car.xml (cam_front) ---
+# --- Camera parameters, from sim/models/car.xml (cam_front) ---
 CAM_OFFSET_FORWARD = 0.16    # m, along vehicle x, from chassis origin
 CAM_HEIGHT = 0.125           # m, world z (chassis z=0.075 + camera z=0.05)
 CAM_PITCH_DOWN = 0.30587887140485215  # rad, ~17.5 deg; exact value from
