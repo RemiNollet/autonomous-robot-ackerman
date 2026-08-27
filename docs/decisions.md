@@ -89,3 +89,24 @@ Recorded at the time each decision was made, not reconstructed afterward. Format
 **Decision:** Keep the convention as specified in `docs/lane-state-contract.md` §2 (`lateral_error` centerline-relative-to-vehicle, `heading_error = tangent − vehicle heading`, both positive-left). Fix the projection code, not the convention — the bug was in the arc math, not in the sign choice.
 
 **Consequence:** This is the reason the SRS risk register flags dataset labeling as the milestone-1 risk with the highest downstream cost (invisible until closed-loop testing at M3). It also argues for the value of writing the acceptance tests before the dataset generator, not after: this exact bug would have silently mislabeled every clockwise-turn sample in the dataset.
+
+---
+
+## ADR-8 — Dataset sample validity is defined by camera geometry, not by envelope tuning
+
+**Context:** The first dataset generation pass sampled poses from hand-chosen envelopes: positives within ±0.7 m lateral of the centerline, negatives 1–4 m off. Both numbers were picked by judgement, not derived from anything.
+
+**What visual inspection caught:** rendering ~50 sample images (rather than the full 2000) surfaced that several `valid=True` samples had the vehicle sitting fully outside the painted lane. The lane half-width is 0.4 m; the positive envelope allowed 0.7 m. The labels themselves were arithmetically correct — verified independently, since on a straight segment the projection reduces to `s = x`, `lateral_error = −y`, `heading_error = −heading`, which the data matched exactly. The defect was in the sampling envelope, not the labeling maths.
+
+**What the first fix attempt got wrong:** the initial hypothesis was that the camera had lost sight of the lane. Building a geometric visibility check and running it against the flagged samples disproved this — all of them had 90+ lane boundary points inside the image. Visibility was never the issue; the vehicle simply being outside the lane was.
+
+**What the visibility check found instead:** turning the same tool on the *negative* samples showed that roughly half of them still had lane markings clearly in frame. On a 45 m closed loop, a vehicle even 5–12 m off course usually has some other part of the loop in view — sweeping the envelope showed no offset/heading combination that reliably hides the track. Those samples would have trained the confidence head to output zero on perfectly readable images. A 50-image spot check would not have caught this: only ~5 of those images are negatives.
+
+**Decision:**
+1. The positive lateral envelope is derived from `LANE_HALF_WIDTH`, not set independently, so the two cannot drift apart.
+2. Sample validity is decided by rejection sampling against the actual camera frustum: a positive must have the lane it should follow visible ahead; a negative must have no lane marking anywhere in frame. Rejection sampling replaces envelope tuning as the mechanism for correctness.
+3. The analytic camera model used by the filter is pinned to MuJoCo's own computed extrinsics by a unit test, agreeing to 1e-9 m. This keeps the generator headless and fast (1.7 s for 2000 labels including rejection) without the model silently diverging from the MJCF.
+
+**Consequence:** Negatives on this track are necessarily "vehicle far off in empty space" cases (mean 6.1 m off centerline). That is a somewhat easy negative — the confidence head will learn "no markings visible" rather than anything subtler about ambiguous perception. Worth stating plainly in the perception write-up rather than implying the confidence signal is more sophisticated than it is. The alternative, negatives with markings visible but mislabeled, would be actively harmful.
+
+**Method note:** both defects were found by checking properties over the whole dataset programmatically, not by looking at rendered images. Visual inspection found the first one and pointed in the wrong direction as to its cause; the sweep found the second, which was the more damaging and was invisible to sampling by eye.

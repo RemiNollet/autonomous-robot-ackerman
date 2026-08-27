@@ -20,6 +20,10 @@ Closure by construction, not by numeric fitting:
   tests/test_track_definitions.py, since a proof on paper is not a
   substitute for checking the arithmetic.
 """
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from perception.dataset.geometry import LineSegment, Arc, Track
 import math

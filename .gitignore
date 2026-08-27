@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+perso/
 
 # --- PyTorch / training artifacts ---
 *.pt
