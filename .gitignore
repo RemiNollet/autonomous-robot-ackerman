@@ -30,8 +30,7 @@ c_generated_code/
 acados_ocp.json
 
 # --- Datasets (large binary — see dataset README for retrieval/generation instead) ---
-data/raw/
-data/processed/
+data/
 *.png
 *.jpg
 !docs/**/*.png

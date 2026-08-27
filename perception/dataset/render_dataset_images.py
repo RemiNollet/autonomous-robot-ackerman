@@ -1,5 +1,5 @@
 """
-Renders camera images for each pose in data/raw/labels.csv.
+Renders camera images for each pose in data/dataset_v0/labels.csv.
 
 Run perception/dataset/generate_dataset.py FIRST (deterministic, headless,
 already tested — see tests/test_generate_dataset.py). This script only
@@ -24,8 +24,9 @@ import numpy as np
 from PIL import Image
 
 VEHICLE_XML = "sim/models/car.xml"
-LABELS_CSV = "data/raw/labels.csv"
-IMG_DIR = "data/raw/images"
+DATASET_DIR = "data/dataset_v0"
+LABELS_CSV = f"{DATASET_DIR}/labels.csv"
+IMG_DIR = f"{DATASET_DIR}/images"
 IMG_WIDTH, IMG_HEIGHT = 320, 240   # matches the onboard camera / bridge protocol resolution
 
 
