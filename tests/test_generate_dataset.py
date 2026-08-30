@@ -22,11 +22,16 @@ def test_generation_is_deterministic():
 
 
 def test_positive_negative_split_matches_config():
+    """generate_labels renders n_total base poses then mirrors every one
+    (see mirror_row / ADR-10), so the returned row count and the
+    valid/invalid split are both exactly double n_total's config-implied
+    values."""
     rows = generate_labels(seed=1, n_total=1000)
+    assert len(rows) == 2000
     n_valid = sum(1 for r in rows if r["valid"])
     n_invalid = sum(1 for r in rows if not r["valid"])
-    assert n_valid == 900
-    assert n_invalid == 100
+    assert n_valid == 1800
+    assert n_invalid == 200
 
 
 def test_positive_samples_within_declared_envelope():
@@ -133,3 +138,61 @@ def test_every_curvature_bin_present_in_every_split():
         assert got == curvature_bins, (
             f"split {split!r} missing curvature bin(s): {curvature_bins - got}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Mirror augmentation (ADR-10). REFERENCE_TRACK is a closed loop traversed
+# one way, built entirely from left turns -- every valid sample has
+# curvature >= 0 by construction of the track, not a sampling defect. Caught
+# by looking at label_distributions.png (one bar chart, three bins, all
+# non-negative), not by any per-sample check, which is exactly why it went
+# unnoticed through ADR-8 and ADR-9's programmatic sweeps: both checked
+# properties that hold identically whether curvature can go negative or not.
+# ---------------------------------------------------------------------------
+
+def test_dataset_doubles_and_covers_both_curvature_signs():
+    rows = generate_labels(seed=1, n_total=2000)
+    assert len(rows) == 4000
+    n_pos_curv = sum(1 for r in rows if r["valid"] and r["curvature"] > 1e-6)
+    n_neg_curv = sum(1 for r in rows if r["valid"] and r["curvature"] < -1e-6)
+    assert n_pos_curv > 0 and n_neg_curv > 0, (
+        "mirroring must produce right-turning (curvature < 0) samples, not "
+        "just double up on left turns"
+    )
+    assert n_pos_curv == n_neg_curv, (
+        "every left-turning sample has exactly one mirrored right-turning "
+        "twin, so the counts must match exactly, not just both be nonzero"
+    )
+
+
+def test_mirror_row_negates_lane_state_and_preserves_everything_else():
+    rows = generate_labels(seed=1, n_total=200)
+    base = {r["filename"]: r for r in rows if not r["mirrored"]}
+    mirrors = {r["filename"]: r for r in rows if r["mirrored"]}
+    assert len(base) == len(mirrors) == 200
+
+    for name, src in base.items():
+        m = mirrors[f"{os.path.splitext(name)[0]}_mirror{os.path.splitext(name)[1]}"]
+        assert m["source_filename"] == name
+        assert m["lateral_error"] == -src["lateral_error"]
+        assert m["heading_error"] == -src["heading_error"]
+        assert m["curvature"] == -src["curvature"]
+        # Everything a mirror doesn't redefine must be untouched, including
+        # split -- a mirror is never allowed to land in a different split
+        # than its own source (that would be leakage introduced by the
+        # augmentation itself, defeating ADR-9).
+        assert m["x"] == src["x"] and m["y"] == src["y"] and m["heading"] == src["heading"]
+        assert m["s"] == src["s"]
+        assert m["confidence"] == src["confidence"]
+        assert m["valid"] == src["valid"]
+        assert m["split"] == src["split"]
+
+
+def test_mirror_filenames_are_unique_and_source_resolvable():
+    rows = generate_labels(seed=1, n_total=300)
+    names = [r["filename"] for r in rows]
+    assert len(names) == len(set(names))
+    all_filenames = set(names)
+    for r in rows:
+        if r["mirrored"]:
+            assert r["source_filename"] in all_filenames

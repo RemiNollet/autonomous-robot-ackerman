@@ -82,7 +82,14 @@ def main():
     with open(LABELS_CSV) as f:
         rows = list(csv.DictReader(f))
 
-    for i, row in enumerate(rows):
+    # mirror rows (see generate_dataset.mirror_row) are not re-rendered
+    # through MuJoCo -- they're an exact horizontal flip of their source
+    # image (cam_front has zero lateral offset, verified in
+    # tests/test_generate_dataset.py), so the source must be rendered first.
+    base_rows = [r for r in rows if r["mirrored"] != "True"]
+    mirror_rows = [r for r in rows if r["mirrored"] == "True"]
+
+    for i, row in enumerate(base_rows):
         x, y, heading = float(row["x"]), float(row["y"]), float(row["heading"])
         qw, qx, qy, qz = quat_from_heading(heading)
 
@@ -95,8 +102,19 @@ def main():
         Image.fromarray(pixels).save(os.path.join(IMG_DIR, row["filename"]))
 
         if (i + 1) % 200 == 0:
-            print(f"{i + 1}/{len(rows)} rendered")
+            print(f"{i + 1}/{len(base_rows)} rendered")
 
+    print(f"Rendered {len(base_rows)} images -> {IMG_DIR}")
+
+    for i, row in enumerate(mirror_rows):
+        src_path = os.path.join(IMG_DIR, row["source_filename"])
+        mirrored = Image.open(src_path).transpose(Image.FLIP_LEFT_RIGHT)
+        mirrored.save(os.path.join(IMG_DIR, row["filename"]))
+
+        if (i + 1) % 200 == 0:
+            print(f"{i + 1}/{len(mirror_rows)} mirrored")
+
+    print(f"Mirrored {len(mirror_rows)} images -> {IMG_DIR}")
     print(f"Done: {len(rows)} images written to {IMG_DIR}")
 
 
