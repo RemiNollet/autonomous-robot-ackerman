@@ -1,6 +1,6 @@
 {
-  "_comment": "PLACEHOLDER. No CNN input pipeline has been designed yet -- M2 (Implement CNN in PyTorch) hasn't started. crop == the full 320x240 frame, resize_to == crop size, i.e. currently a no-op. tools/visualize_camera_coverage.py and tools/camera_resolvability.py both read this file rather than hard-coding a crop, specifically so that once M2 decides the real crop/resize, both tools immediately reflect it just by editing this file and re-running them -- see the finding in the camera-projection verification PR about 'visible' vs 'visible to the network' being different predicates once this stops being a no-op.",
+  "_comment": "M2: crop rows 80:240 of the 320x240 render (drops the sky/horizon band, keeps ground) and resize to 160x80 (WxH) -- perception/model/preprocess.py and perception/model/lane_cnn.py both read the resulting shape from here rather than hard-coding it. tools/visualize_camera_coverage.py and tools/camera_resolvability.py also read this file for their crop-rectangle overlay and CNN-resolution lane-width curve. docs/decisions.md ADR-11 finding 7: perception/dataset/camera_visibility.py's lane_is_visible/any_lane_visible still run on the full 320x240 frame, not this crop -- 'visible' and 'visible to the network' are different predicates now that this is a real crop and not a no-op placeholder, and that gap has not been closed.",
   "source_frame": {"width": 320, "height": 240},
-  "crop": {"top": 0, "left": 0, "width": 320, "height": 240},
-  "resize_to": {"width": 320, "height": 240}
+  "crop": {"top": 80, "left": 0, "width": 320, "height": 160},
+  "resize_to": {"width": 160, "height": 80}
 }
