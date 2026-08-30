@@ -9,7 +9,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from perception.dataset.generate_dataset import (
-    generate_labels, POS_LATERAL_RANGE, POS_HEADING_RANGE,
+    generate_labels, POS_LATERAL_RANGE, POS_HEADING_RANGE, zone_for_s,
 )
 from perception.dataset.track_definitions import REFERENCE_TRACK, LANE_HALF_WIDTH
 from perception.dataset.camera_visibility import lane_is_visible, any_lane_visible
@@ -102,3 +102,34 @@ def test_filenames_are_unique():
     rows = generate_labels(seed=1, n_total=500)
     names = [r["filename"] for r in rows]
     assert len(names) == len(set(names))
+
+
+def test_split_has_no_leakage_across_track_zones():
+    """Splits are assigned by contiguous arc-length sub-zone within each
+    track primitive, not per-sample, so that two nearly-identical poses
+    (same track segment, tiny offset delta) can never land in different
+    splits. Verify the sub-zone -> split mapping is a pure function of s
+    (via zone_for_s) on the actually-generated data, not just on
+    SPLIT_ASSIGNMENT in isolation."""
+    rows = generate_labels(seed=1, n_total=2000)
+    for r in rows:
+        assert r["split"] == zone_for_s(r["s"]), (
+            f"row split {r['split']!r} does not match zone_for_s({r['s']}) "
+            f"= {zone_for_s(r['s'])!r}"
+        )
+
+
+def test_every_curvature_bin_present_in_every_split():
+    """Regression test: a single loop-wide 70/20/10 cut concentrated the
+    entire test split inside one R=5m arc (no straight, no R=3m samples) and
+    left val with no R=3m coverage at all -- a real defect caught by
+    checking split x curvature-bin counts programmatically, not by eye.
+    Splitting per-primitive (see zone_for_s) must guarantee every curvature
+    magnitude on the track appears in every split."""
+    rows = generate_labels(seed=1, n_total=2000)
+    curvature_bins = {0.0, round(1 / 5, 3), round(1 / 3, 3)}
+    for split in ("train", "val", "test"):
+        got = {round(abs(r["curvature"]), 3) for r in rows if r["split"] == split}
+        assert got == curvature_bins, (
+            f"split {split!r} missing curvature bin(s): {curvature_bins - got}"
+        )

@@ -46,12 +46,24 @@ NEG_LATERAL_RANGE = (2.0, 10.0)
 NEG_HEADING_RANGE = (1.0, math.pi)
 MAX_REJECTION_ATTEMPTS = 200
 
-SPLIT_ZONES = 10
-# 7/2/1 zones -> roughly 70/20/10by contiguous arc-length blocks, not
+SPLIT_SUBZONES_PER_PRIMITIVE = 10
+# 7/2/1 sub-zones -> roughly 70/20/10 by contiguous arc-length blocks, not
 # per-sample random assignment. This is the M1 no-leakage requirement
 # applied to pose sampling: without spatial binning, two nearly-identical
 # poses (close in s, tiny offset difference) could land in different
 # splits and inflate validation performance.
+#
+# The split is applied WITHIN each track primitive (straight/arc segment)
+# independently, not once across the whole loop. A single global 70/20/10
+# cut concentrates val/test into whichever few primitives happen to fall at
+# the end of the loop -- on REFERENCE_TRACK that put the entire test split
+# inside one R=5m arc with zero straight-line or R=3m coverage, and val with
+# no R=3m coverage at all, silently invalidating any val/test error reported
+# per curvature bin. Splitting per-primitive guarantees every curvature bin
+# is represented in every split, at the cost of more train/val/test
+# boundaries around the loop (one pair per primitive instead of one pair
+# total) -- still negligible leakage risk, since each boundary is a single
+# point in a continuous, densely-sampled arc length.
 SPLIT_ASSIGNMENT = (["train"] * 7) + (["val"] * 2) + (["test"] * 1)
 
 
@@ -102,8 +114,24 @@ def sample_pose(rng: np.random.Generator, negative: bool):
 
 
 def zone_for_s(s: float) -> str:
-    zone_idx = min(SPLIT_ZONES - 1, int(s / REFERENCE_TRACK.total_length * SPLIT_ZONES))
-    return SPLIT_ASSIGNMENT[zone_idx]
+    """Which split s falls into, decided within its own track primitive.
+
+    Uses REFERENCE_TRACK.starts / .primitives directly (same lookup as
+    Track._locate) rather than a single loop-wide cut, so every primitive
+    (and therefore every curvature value on this track) contributes its own
+    70/20/10 to train/val/test.
+    """
+    starts = REFERENCE_TRACK.starts
+    for i in range(len(starts) - 1, -1, -1):
+        if s >= starts[i] - 1e-9:
+            length = REFERENCE_TRACK.primitives[i].length
+            s_local = s - starts[i]
+            sub_idx = min(
+                SPLIT_SUBZONES_PER_PRIMITIVE - 1,
+                int(s_local / length * SPLIT_SUBZONES_PER_PRIMITIVE),
+            )
+            return SPLIT_ASSIGNMENT[sub_idx]
+    return SPLIT_ASSIGNMENT[0]
 
 
 def quat_from_heading(heading: float):
@@ -148,10 +176,13 @@ def write_labels_csv(rows, out_path: str):
         writer.writerows(rows)
 
 
+DATASET_DIR = "data/dataset_v0"
+
 if __name__ == "__main__":
     rows = generate_labels()
-    write_labels_csv(rows, "data/raw/labels.csv")
-    print(f"Generated {len(rows)} labels -> data/raw/labels.csv")
+    labels_path = f"{DATASET_DIR}/labels.csv"
+    write_labels_csv(rows, labels_path)
+    print(f"Generated {len(rows)} labels -> {labels_path}")
     print(f"  positive (valid): {sum(1 for r in rows if r['valid'])}")
     print(f"  negative (invalid): {sum(1 for r in rows if not r['valid'])}")
     for split in ("train", "val", "test"):
