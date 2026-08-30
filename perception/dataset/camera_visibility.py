@@ -74,48 +74,12 @@ def point_in_camera_frame(px, py, pz, vehicle_x, vehicle_y, vehicle_heading):
     return cx, cy, cz
 
 
-def project_to_pixel(px, py, pz, vehicle_x, vehicle_y, vehicle_heading):
-    """World point -> (u, v, depth, in_frame).
-
-    Standard OpenGL/MuJoCo symmetric-frustum projection: camera-frame (x
-    right, y up, -z forward) -> NDC in [-1, 1] via the fovy/aspect-derived
-    half-angles -> viewport pixels.
-
-    `u` in [0, IMG_WIDTH], increasing right, matching NDC x. `v` in
-    [0, IMG_HEIGHT] is measured from the TOP row and increases downward --
-    image-array convention (row 0 = top), NOT OpenGL's bottom-up NDC y, so
-    that `v` lines up directly with a rendered frame's row index as read by
-    PIL/numpy. This flip (v = (1 - ndc_y)/2 * H rather than (ndc_y + 1)/2 * H)
-    was verified empirically against real MuJoCo renders in
-    tests/test_camera_visibility.py::test_project_to_pixel_matches_rendered_markers
-    -- get it backwards and every vertical position silently mirrors.
-
-    `depth` is the distance in front of the camera along its viewing axis
-    (positive = in front). `in_frame` is False for points behind the camera
-    (depth <= 0) or outside the viewport, independent of `u`/`v`'s numeric
-    value in that case (they are still returned, for debugging/plotting, but
-    are meaningless off-frustum since depth could be near zero).
-    """
-    cx, cy, cz = point_in_camera_frame(px, py, pz, vehicle_x, vehicle_y, vehicle_heading)
-    depth = -cz
-    if depth <= 1e-6:
-        return None, None, depth, False  # behind the camera, or at the camera
-
-    ndc_x = cx / (depth * _TAN_HALF_FOVX)
-    ndc_y = cy / (depth * _TAN_HALF_FOVY)
-    u = (ndc_x + 1.0) * 0.5 * IMG_WIDTH
-    v = (1.0 - ndc_y) * 0.5 * IMG_HEIGHT
-
-    # Inclusive on both ends to exactly match the old angular-bounds check
-    # (abs(cx/depth) <= tan_half_fovx etc.) that this replaces -- a boundary
-    # sample landing exactly on an edge is accepted either way.
-    in_frame = (0.0 <= u <= IMG_WIDTH) and (0.0 <= v <= IMG_HEIGHT)
-    return u, v, depth, in_frame
-
-
 def point_visible(px, py, pz, vehicle_x, vehicle_y, vehicle_heading) -> bool:
-    _, _, _, in_frame = project_to_pixel(px, py, pz, vehicle_x, vehicle_y, vehicle_heading)
-    return in_frame
+    cx, cy, cz = point_in_camera_frame(px, py, pz, vehicle_x, vehicle_y, vehicle_heading)
+    if cz >= -1e-6:
+        return False  # behind the camera
+    depth = -cz
+    return (abs(cy / depth) <= _TAN_HALF_FOVY) and (abs(cx / depth) <= _TAN_HALF_FOVX)
 
 
 def count_visible_lane_points(track: Track, vehicle_x, vehicle_y, vehicle_heading,

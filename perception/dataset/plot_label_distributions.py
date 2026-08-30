@@ -29,16 +29,7 @@ LABELS_CSV = f"{DATASET_DIR}/labels.csv"
 OUT_PNG = "docs/dataset/label_distributions.png"
 
 CURVATURE_BIN_TOL = 1e-6
-# Signed, not abs(curvature) -- binning by magnitude alone would silently
-# collapse left- and right-turning samples into the same bar and hide
-# exactly the defect ADR-10 documents (mirror augmentation adding
-# right-turning samples that didn't exist before). REFERENCE_TRACK itself
-# only ever turns left (track_definitions.py), so every negative-curvature
-# sample in the dataset is a mirror twin, by construction -- these bins are
-# also the fastest way to notice if that ever stops being true.
 CURVATURE_BINS = [
-    ("right, R=3m (κ=-1/3)", -1 / 3),
-    ("right, R=5m (κ=-1/5)", -1 / 5),
     ("straight (κ=0)", 0.0),
     ("left, R=5m (κ=1/5)", 1 / 5),
     ("left, R=3m (κ=1/3)", 1 / 3),
@@ -46,8 +37,8 @@ CURVATURE_BINS = [
 
 
 def curvature_bin_label(curvature: float) -> str:
-    for label, val in CURVATURE_BINS:
-        if abs(curvature - val) < CURVATURE_BIN_TOL:
+    for label, mag in CURVATURE_BINS:
+        if abs(abs(curvature) - mag) < CURVATURE_BIN_TOL:
             return label
     return f"other (κ={curvature:.3f})"
 
@@ -80,9 +71,8 @@ def main():
                   for label in bin_labels]
         print(f"  {split:5s} " + "  ".join(f"{label}={c}" for label, c in zip(bin_labels, counts)))
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 9))
-    palette = ["tab:red", "tab:orange", "tab:blue", "tab:green", "tab:purple"]
-    colors = dict(zip(bin_labels, palette))
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+    colors = {bin_labels[0]: "tab:blue", bin_labels[1]: "tab:orange", bin_labels[2]: "tab:green"}
 
     ax = axes[0, 0]
     counts = [sum(1 for r in valid_rows if r["bin"] == label) for label in bin_labels]
