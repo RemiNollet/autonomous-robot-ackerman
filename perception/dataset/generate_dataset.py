@@ -139,6 +139,50 @@ def quat_from_heading(heading: float):
     return (math.cos(heading / 2.0), 0.0, 0.0, math.sin(heading / 2.0))
 
 
+def mirror_row(row: dict) -> dict:
+    """The mirror-augmentation twin of a labeled sample: same rendered pose,
+    horizontally-flipped image, negated lane_state.
+
+    REFERENCE_TRACK is a closed loop traversed in one direction, built
+    entirely from LEFT turns (see track_definitions.py) -- every valid
+    sample has curvature >= 0, by construction of the track, not by a
+    sampling bug. A CNN trained on this would learn "curvature is
+    non-negative" and never predict a right turn. Caught by inspecting
+    label_distributions.png rather than any unit test (same method as
+    ADR-8/ADR-9: a property invisible until the whole dataset is looked at,
+    not any single sample).
+
+    The fix is exact, not approximate: cam_front has zero lateral offset
+    (sim/models/car.xml: pos="0.16 0 0.05", x-offset only) and zero
+    yaw/roll in its mount, so mirroring the world across the vehicle's
+    forward axis (y -> -y) is geometrically identical to flipping the
+    rendered image left-right -- verified directly against
+    point_in_camera_frame: mirroring (vehicle_y, heading) negates the
+    camera-frame x-coordinate (and therefore pixel column u -> W-1-u)
+    and leaves the camera-frame y-coordinate (pixel row v) and depth
+    exactly unchanged. lateral_error, heading_error, and curvature all
+    flip sign under this same y -> -y mirror by the sign convention in
+    docs/lane-state-contract.md section 2; confidence/valid/split are
+    unaffected (visibility and track-zone membership are unchanged by
+    mirroring).
+
+    x/y/heading/s are left as the SOURCE pose's values, not a fabricated
+    "mirrored world pose" -- there is no mirrored track to place a vehicle
+    on. That also means split (a pure function of s via zone_for_s) is
+    identical to the source row's split for free: a mirror never crosses a
+    train/val/test boundary its source didn't.
+    """
+    stem, ext = os.path.splitext(row["filename"])
+    mirrored = dict(row)
+    mirrored["filename"] = f"{stem}_mirror{ext}"
+    mirrored["source_filename"] = row["filename"]
+    mirrored["lateral_error"] = -row["lateral_error"]
+    mirrored["heading_error"] = -row["heading_error"]
+    mirrored["curvature"] = -row["curvature"]
+    mirrored["mirrored"] = True
+    return mirrored
+
+
 def generate_labels(seed: int = SEED, n_total: int = N_TOTAL):
     rng = np.random.default_rng(seed)
     n_negative = int(round(n_total * NEGATIVE_FRACTION))
@@ -155,6 +199,7 @@ def generate_labels(seed: int = SEED, n_total: int = N_TOTAL):
 
         rows.append({
             "filename": f"img_{i:05d}.png",
+            "source_filename": "",
             "x": x, "y": y, "heading": heading,
             "s": ls.s,
             "lateral_error": ls.lateral_error,
@@ -163,7 +208,10 @@ def generate_labels(seed: int = SEED, n_total: int = N_TOTAL):
             "confidence": confidence_target,
             "valid": confidence_target >= 0.5,
             "split": split,
+            "mirrored": False,
         })
+
+    rows += [mirror_row(r) for r in rows]
     return rows
 
 
@@ -182,8 +230,13 @@ if __name__ == "__main__":
     rows = generate_labels()
     labels_path = f"{DATASET_DIR}/labels.csv"
     write_labels_csv(rows, labels_path)
-    print(f"Generated {len(rows)} labels -> {labels_path}")
+    print(f"Generated {len(rows)} labels ({len(rows) // 2} rendered + "
+          f"{len(rows) // 2} mirrored) -> {labels_path}")
     print(f"  positive (valid): {sum(1 for r in rows if r['valid'])}")
     print(f"  negative (invalid): {sum(1 for r in rows if not r['valid'])}")
     for split in ("train", "val", "test"):
         print(f"  {split}: {sum(1 for r in rows if r['split'] == split)}")
+    n_pos_curv = sum(1 for r in rows if r["valid"] and r["curvature"] > 1e-6)
+    n_neg_curv = sum(1 for r in rows if r["valid"] and r["curvature"] < -1e-6)
+    print(f"  curvature: {n_pos_curv} left-turning, {n_neg_curv} right-turning "
+          f"(valid samples)")

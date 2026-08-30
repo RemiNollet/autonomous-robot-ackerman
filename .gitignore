@@ -36,6 +36,9 @@ data/
 !docs/**/*.png
 !docs/**/*.jpg
 
+# --- MuJoCo ---
+MUJOCO_LOG.TXT
+
 # --- Docker ---
 *.tar
 
