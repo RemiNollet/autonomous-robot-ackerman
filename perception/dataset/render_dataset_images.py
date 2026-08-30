@@ -37,7 +37,36 @@ def quat_from_heading(heading: float):
     return (math.cos(heading / 2.0), 0.0, 0.0, math.sin(heading / 2.0))
 
 
+# Debug-only: inject bright, physically-impossible marker geoms into an
+# already-updated MjvScene so a real MuJoCo render can be checked against
+# camera_visibility.project_to_pixel (tests/test_camera_visibility.py,
+# tools/visualize_camera_coverage.py). Visual only -- mjv_updateScene()
+# resets scene.ngeom to the model's own geom count on every call, so markers
+# never persist into a subsequent frame by themselves; this flag is a second,
+# explicit guard so a debug run can never be mistaken for a real one. MUST
+# stay False here -- these markers would appear in every training image.
+DEBUG_INSERT_MARKERS = False
+
+
+def insert_debug_marker(scene, pos, rgba, radius=0.02):
+    """Append one sphere marker to an already-updated MjvScene. No physics,
+    no effect on qpos or labels -- rendering-only, for camera-projection
+    verification. Never call this from the real generation path (see
+    DEBUG_INSERT_MARKERS above)."""
+    i = scene.ngeom
+    mujoco.mjv_initGeom(
+        scene.geoms[i], type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=np.array([radius, 0, 0]), pos=np.array(pos, dtype=np.float64),
+        mat=np.eye(3).flatten(), rgba=np.array(rgba, dtype=np.float32),
+    )
+    scene.ngeom += 1
+
+
 def main():
+    assert not DEBUG_INSERT_MARKERS, (
+        "DEBUG_INSERT_MARKERS must be False for dataset generation -- "
+        "markers would appear in every rendered training image"
+    )
     os.makedirs(IMG_DIR, exist_ok=True)
 
     model = mujoco.MjModel.from_xml_path(VEHICLE_XML)
@@ -53,7 +82,14 @@ def main():
     with open(LABELS_CSV) as f:
         rows = list(csv.DictReader(f))
 
-    for i, row in enumerate(rows):
+    # mirror rows (see generate_dataset.mirror_row) are not re-rendered
+    # through MuJoCo -- they're an exact horizontal flip of their source
+    # image (cam_front has zero lateral offset, verified in
+    # tests/test_generate_dataset.py), so the source must be rendered first.
+    base_rows = [r for r in rows if r["mirrored"] != "True"]
+    mirror_rows = [r for r in rows if r["mirrored"] == "True"]
+
+    for i, row in enumerate(base_rows):
         x, y, heading = float(row["x"]), float(row["y"]), float(row["heading"])
         qw, qx, qy, qz = quat_from_heading(heading)
 
@@ -66,8 +102,19 @@ def main():
         Image.fromarray(pixels).save(os.path.join(IMG_DIR, row["filename"]))
 
         if (i + 1) % 200 == 0:
-            print(f"{i + 1}/{len(rows)} rendered")
+            print(f"{i + 1}/{len(base_rows)} rendered")
 
+    print(f"Rendered {len(base_rows)} images -> {IMG_DIR}")
+
+    for i, row in enumerate(mirror_rows):
+        src_path = os.path.join(IMG_DIR, row["source_filename"])
+        mirrored = Image.open(src_path).transpose(Image.FLIP_LEFT_RIGHT)
+        mirrored.save(os.path.join(IMG_DIR, row["filename"]))
+
+        if (i + 1) % 200 == 0:
+            print(f"{i + 1}/{len(mirror_rows)} mirrored")
+
+    print(f"Mirrored {len(mirror_rows)} images -> {IMG_DIR}")
     print(f"Done: {len(rows)} images written to {IMG_DIR}")
 
 
