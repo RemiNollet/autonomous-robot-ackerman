@@ -31,16 +31,19 @@ IMG_DIR = f"{DATASET_DIR}/images"
 class LaneDataset(Dataset):
     def __init__(self, labels_csv: str = LABELS_CSV, img_dir: str = IMG_DIR,
                  split: Optional[str] = None, mirrored: Optional[bool] = None,
-                 augment: bool = False, seed: int = 0):
+                 augment: bool = False, seed: int = 0, augment_params: Optional[dict] = None):
         """
         split:    "train" / "val" / "test", or None for all splits.
         mirrored: True/False to keep only mirrored or only source rows, or
                   None for both -- see mirror-generalization probe above.
         augment:  apply preprocess.augment_image (train split only, by
                   convention of the caller, not enforced here).
+        augment_params: the `augmentation:` block from training_config.yaml;
+                  None falls back to preprocess.DEFAULT_AUGMENT_PARAMS.
         """
         self.img_dir = img_dir
         self.augment = augment
+        self.augment_params = augment_params
         self.rng = np.random.default_rng(seed)
 
         with open(labels_csv) as f:
@@ -60,7 +63,7 @@ class LaneDataset(Dataset):
         img = Image.open(os.path.join(self.img_dir, row["filename"]))
         img = crop_and_resize(img)
         if self.augment:
-            img = augment_image(img, self.rng)
+            img = augment_image(img, self.rng, self.augment_params)
         arr = to_standardized_array(img)
 
         e_y, e_psi, kappa = normalize_targets(

@@ -69,18 +69,29 @@ def preprocess(img: Image.Image) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Augmentation -- train split only, pixel perturbation only.
+# Augmentation -- train split only, pixel perturbation only. Defaults here
+# match perception/model/training_config.yaml's augmentation: block -- that
+# file is the source of truth for a real run (train.py reads it and passes
+# values through); these defaults exist so augment_image is still usable
+# (e.g. from a test) without threading a config through by hand.
 # ---------------------------------------------------------------------------
 
-MAX_ERASING_PATCHES = 2
-MAX_ERASING_AREA_FRAC = 0.15
+DEFAULT_AUGMENT_PARAMS = {
+    "brightness_range": (0.8, 1.2),
+    "contrast_range": (0.8, 1.2),
+    "gamma_range": (0.8, 1.25),
+    "gaussian_noise_sigma": 0.03,
+    "max_erasing_patches": 2,
+    "max_erasing_area_frac": 0.15,
+    "min_erasing_area_frac": 0.02,
+}
 
 
-def _jitter_brightness_contrast_gamma(arr: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+def _jitter_brightness_contrast_gamma(arr: np.ndarray, rng: np.random.Generator, params: dict) -> np.ndarray:
     """arr: (H, W, 3) float in [0, 1]."""
-    brightness = rng.uniform(0.8, 1.2)
-    contrast = rng.uniform(0.8, 1.2)
-    gamma = rng.uniform(0.8, 1.25)
+    brightness = rng.uniform(*params["brightness_range"])
+    contrast = rng.uniform(*params["contrast_range"])
+    gamma = rng.uniform(*params["gamma_range"])
 
     arr = arr * brightness
     mean = arr.mean()
@@ -90,19 +101,19 @@ def _jitter_brightness_contrast_gamma(arr: np.ndarray, rng: np.random.Generator)
     return np.clip(arr, 0.0, 1.0)
 
 
-def _add_gaussian_noise(arr: np.ndarray, rng: np.random.Generator, sigma: float = 0.03) -> np.ndarray:
-    noise = rng.normal(0.0, sigma, size=arr.shape).astype(np.float32)
+def _add_gaussian_noise(arr: np.ndarray, rng: np.random.Generator, params: dict) -> np.ndarray:
+    noise = rng.normal(0.0, params["gaussian_noise_sigma"], size=arr.shape).astype(np.float32)
     return np.clip(arr + noise, 0.0, 1.0)
 
 
-def _random_erasing(arr: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """Up to MAX_ERASING_PATCHES rectangles, each under
-    MAX_ERASING_AREA_FRAC of the image area, filled with uniform noise."""
+def _random_erasing(arr: np.ndarray, rng: np.random.Generator, params: dict) -> np.ndarray:
+    """Up to max_erasing_patches rectangles, each under
+    max_erasing_area_frac of the image area, filled with uniform noise."""
     h, w = arr.shape[0], arr.shape[1]
     total_area = h * w
-    n_patches = rng.integers(0, MAX_ERASING_PATCHES + 1)
+    n_patches = rng.integers(0, params["max_erasing_patches"] + 1)
     for _ in range(n_patches):
-        patch_area = rng.uniform(0.02, MAX_ERASING_AREA_FRAC) * total_area
+        patch_area = rng.uniform(params["min_erasing_area_frac"], params["max_erasing_area_frac"]) * total_area
         aspect = rng.uniform(0.3, 3.3)
         patch_h = min(h, max(1, int(round((patch_area * aspect) ** 0.5))))
         patch_w = min(w, max(1, int(round((patch_area / aspect) ** 0.5))))
@@ -112,13 +123,19 @@ def _random_erasing(arr: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return arr
 
 
-def augment_image(img: Image.Image, rng: np.random.Generator) -> Image.Image:
+def augment_image(img: Image.Image, rng: np.random.Generator, params: dict = None) -> Image.Image:
     """Applied to an already crop_and_resize'd image, BEFORE standardization.
     Pixel-space only -- no flip (mirrors already exist in the dataset,
     ADR-10, and a mirror pair shares a split, so flipping again would pair a
-    sample with its own twin within the same split)."""
+    sample with its own twin within the same split).
+
+    `params`: dict with the keys in DEFAULT_AUGMENT_PARAMS -- pass the
+    `augmentation:` block loaded from training_config.yaml for a real
+    training run; omit to fall back to the defaults above."""
+    if params is None:
+        params = DEFAULT_AUGMENT_PARAMS
     arr = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
-    arr = _jitter_brightness_contrast_gamma(arr, rng)
-    arr = _add_gaussian_noise(arr, rng)
-    arr = _random_erasing(arr, rng)
+    arr = _jitter_brightness_contrast_gamma(arr, rng, params)
+    arr = _add_gaussian_noise(arr, rng, params)
+    arr = _random_erasing(arr, rng, params)
     return Image.fromarray((arr * 255.0).astype(np.uint8))

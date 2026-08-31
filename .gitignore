@@ -35,6 +35,7 @@ data/
 *.jpg
 !docs/**/*.png
 !docs/**/*.jpg
+!perception/model/*.png
 
 # --- MuJoCo ---
 MUJOCO_LOG.TXT
