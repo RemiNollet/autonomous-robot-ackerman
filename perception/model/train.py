@@ -41,8 +41,11 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
+from perception.dataset.track_definitions import LANE_HALF_WIDTH
+from perception.dataset.generate_dataset import POS_HEADING_RANGE
 from perception.model.dataset import LaneDataset
 from perception.model.lane_cnn import LaneCNN, count_params, count_macs
+from perception.model.physical_metrics import physical_metrics, format_physical_report
 from perception.model.loss import lane_loss, component_losses
 from perception.model.targets import E_Y_SCALE, E_PSI_SCALE, KAPPA_SCALE
 
@@ -357,8 +360,15 @@ def main():
     plateaus = {k: plateau_epoch(history, f"val_{k}") for k in ("e_y", "e_psi", "kappa", "confidence")}
     print("plateau epochs (val, main model):", plateaus)
 
+    physical_sections = []
+    main_physical = physical_metrics(model, DataLoader(test_ds, batch_size=args.batch_size), device)
+    physical_sections.append(format_physical_report(
+        main_physical, title="main (width=1.0), test split", in_distribution=True,
+        lane_half_width=LANE_HALF_WIDTH, heading_envelope=POS_HEADING_RANGE,
+    ))
+
     if args.skip_ablation:
-        _write_results(results, config, run_hash, plateaus)
+        _write_results(results, config, run_hash, plateaus, physical_sections)
         return
 
     # --- baseline 1: constant predictor ---
@@ -391,7 +401,8 @@ def main():
         batch_size=args.batch_size, device=device, seed=args.seed,
         component_weights=config["component_weights"], log_prefix="[mirror-probe] ",
     )
-    mirror_eval_stats = evaluate(probe_model, DataLoader(train_mirror_eval_ds, batch_size=args.batch_size), device,
+    mirror_loader = DataLoader(train_mirror_eval_ds, batch_size=args.batch_size)
+    mirror_eval_stats = evaluate(probe_model, mirror_loader, device,
                                   component_weights=config["component_weights"])
     results["mirror-generalization probe"] = {
         "params": count_params(probe_model), "macs": count_macs(probe_model),
@@ -399,11 +410,17 @@ def main():
         "note": "trained on train-split SOURCE renders only; 'test' column here is "
                 "evaluation on those same samples' MIRROR twins (unseen), not the usual test split",
     }
+    mirror_physical = physical_metrics(probe_model, mirror_loader, device)
+    physical_sections.append(format_physical_report(
+        mirror_physical, title="mirror-generalization probe, mirror-twin eval set",
+        in_distribution=False, lane_half_width=LANE_HALF_WIDTH, heading_envelope=POS_HEADING_RANGE,
+    ))
 
-    _write_results(results, config, run_hash, plateaus)
+    _write_results(results, config, run_hash, plateaus, physical_sections)
 
 
-def _write_results(results: dict, config: dict, run_hash: str, plateaus: dict = None):
+def _write_results(results: dict, config: dict, run_hash: str, plateaus: dict = None,
+                    physical_sections: list = None):
     lines = ["# M2 results\n",
              f"\nconfig_hash={run_hash}  (perception/model/training_config.yaml, "
              f"epochs={config['epochs']} lr={config['lr']} batch_size={config['batch_size']} "
@@ -425,16 +442,31 @@ def _write_results(results: dict, config: dict, run_hash: str, plateaus: dict = 
              "monitoring) so a future windowed or continuous-curvature label can reuse it.\n"]
     if plateaus:
         lines.append(f"\nPlateau epoch per component (val, main model): {plateaus}\n")
-    lines += ["\n| Run | Params | MACs | val loss | test/eval MAE e_y (m) | MAE e_psi (rad) | MAE kappa (1/m) | conf acc | train time |\n",
-              "|---|---|---|---|---|---|---|---|---|\n"]
+    # No kappa column here on purpose: a per-run MAE number next to the
+    # other columns reads as a result even with a caveat attached. The
+    # physical-unit sections below state explicitly, in words, why kappa
+    # isn't reported as performance at all -- see format_physical_report.
+    lines += ["\n| Run | Params | MACs | val loss | normalized test MAE e_y | normalized test MAE e_psi | conf acc | train time |\n",
+              "|---|---|---|---|---|---|---|---|\n"]
     for name, r in results.items():
         val_loss = f"{r['val'].loss:.4f}" if r["val"] is not None else "n/a"
         t = r["test"]
         lines.append(f"| {name} | {r['params']:,} | {r['macs']:,} | {val_loss} | "
-                      f"{t.mae_e_y:.4f} | {t.mae_e_psi:.4f} | {t.mae_kappa:.4f} | "
+                      f"{t.mae_e_y:.4f} | {t.mae_e_psi:.4f} | "
                       f"{t.conf_accuracy:.3f} | {r['train_time_s']:.1f}s |\n")
         if "note" in r:
             lines.append(f"\n*{name}*: {r['note']}\n")
+
+    if physical_sections:
+        lines.append("\n## Test-set error in physical units\n")
+        lines.append(
+            "\nSee `perception/model/physical_metrics.py`. \"Normalized\" above is the same "
+            "unit the loss is computed in (dimensionless, scaled by envelope width); the tables "
+            "below are the physical-unit numbers a controller would actually see.\n"
+        )
+        for section in physical_sections:
+            lines.append("\n" + section)
+
     os.makedirs(os.path.dirname(RESULTS_PATH), exist_ok=True)
     with open(RESULTS_PATH, "w") as f:
         f.writelines(lines)

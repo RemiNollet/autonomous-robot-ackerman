@@ -20,8 +20,9 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from perception.dataset.camera_visibility import (
-    point_in_camera_frame, point_visible, project_to_pixel,
+    point_in_camera_frame, point_visible, point_visible_in_crop, project_to_pixel,
     lane_is_visible, any_lane_visible, IMG_WIDTH, IMG_HEIGHT,
+    CROP_TOP, CROP_BOTTOM, CROP_LEFT, CROP_RIGHT,
 )
 from perception.dataset.track_definitions import REFERENCE_TRACK, LANE_HALF_WIDTH
 
@@ -282,3 +283,48 @@ def test_project_to_pixel_matches_rendered_markers():
         f"top) or the aspect-derived horizontal FOV against what MuJoCo "
         f"actually rasterizes"
     )
+
+
+# ---------------------------------------------------------------------------
+# Crop-visibility consistency (docs/decisions.md ADR-11 finding 7, closed by
+# ADR-12's crop-aware dataset generation): a point can be in the full
+# 320x240 frame but outside the CNN's actual crop, and the dataset generator
+# must not count it as "visible" if the network never receives it.
+# ---------------------------------------------------------------------------
+
+def test_crop_bounds_match_the_cnn_input_config():
+    """point_visible_in_crop's bounds are read from
+    cnn_input_config.json, not restated -- this pins the values so a future
+    crop change is caught here instead of silently drifting."""
+    assert (CROP_TOP, CROP_BOTTOM, CROP_LEFT, CROP_RIGHT) == (80, 182, 0, 320)
+
+
+def test_point_visible_in_crop_rejects_points_below_the_crop_but_in_frame():
+    """A point close enough to project into the discarded skybox rows
+    (below CROP_BOTTOM) must fail point_visible_in_crop even though
+    point_visible (full-frame) accepts it -- this is the exact gap ADR-11
+    finding 7 flagged and ADR-12 closed."""
+    # Straight ahead, close to the vehicle: known to land near the bottom of
+    # the full frame (row > CROP_BOTTOM) from the resolvability sweep.
+    px, py, pz = 0.27, 0.0, 0.02
+    vx, vy, heading = 0.0, 0.0, 0.0
+    u, v, depth, in_frame = project_to_pixel(px, py, pz, vx, vy, heading)
+    assert in_frame, "fixture point must be in the full frame for this test to mean anything"
+    assert v > CROP_BOTTOM, f"fixture point must land below the crop (v={v}); adjust the fixture distance"
+
+    assert point_visible(px, py, pz, vx, vy, heading) is True
+    assert point_visible_in_crop(px, py, pz, vx, vy, heading) is False
+
+
+def test_point_visible_in_crop_accepts_a_point_inside_the_crop():
+    px, py, pz = 1.5, 0.0, 0.02
+    vx, vy, heading = 0.0, 0.0, 0.0
+    u, v, depth, in_frame = project_to_pixel(px, py, pz, vx, vy, heading)
+    assert in_frame and CROP_TOP <= v <= CROP_BOTTOM, (
+        f"fixture point must land inside the crop (v={v}); adjust the fixture distance"
+    )
+    assert point_visible_in_crop(px, py, pz, vx, vy, heading) is True
+
+
+def test_point_visible_in_crop_rejects_points_behind_the_camera():
+    assert point_visible_in_crop(-3.0, 0.0, 0.02, 0.0, 0.0, 0.0) is False

@@ -14,3 +14,12 @@ empy==3.3.4
 
 pytest
 numpy
+
+# carsim_bridge/perception_node.py (M2): CPU-only torch, no CUDA/MPS on this
+# VM. perception/model/preprocess.py needs PIL; pyyaml is only needed on the
+# training side (perception/model/train.py reads training_config.yaml),
+# not here. Pin loosely against requirements-sim.txt's Mac-side torch==2.13.0
+# -- exact patch match isn't required for inference-only CPU use, but keep
+# the major version aligned if this ever needs bumping.
+torch==2.13.0
+pillow
