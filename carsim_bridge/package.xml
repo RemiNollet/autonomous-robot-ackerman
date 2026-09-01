@@ -10,7 +10,7 @@
     everything downstream sees only /carsim/* topics and /lane_state
     (docs/decisions.md ADR-1, ADR-2; docs/lane-state-contract.md).
   </description>
-  <maintainer email="you@example.com">Remi Nollet</maintainer>
+  <maintainer email="remi.nollet@live.fr">Remi Nollet</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
@@ -25,12 +25,12 @@
 
   <!--
     perception_node.py also needs torch and pillow (CPU-only). Neither has
-    a resolvable rosdep key, so they're deliberately not declared here --
-    a package.xml <depend> rosdep can't resolve breaks `rosdep install
-    --from-paths src`. They're pip-installed into the VM venv instead; see
-    requirements_vm.txt (repo root) for versions and the
-    --system-site-packages rationale (rclpy from apt must stay importable
-    alongside them).
+    a resolvable rosdep key, so they're deliberately not declared here:
+    a package.xml depend rosdep can't resolve breaks rosdep's
+    from-paths dependency installation step. They're pip-installed into
+    the VM venv instead; see requirements_vm.txt (repo root) for versions
+    and the system-site-packages rationale (rclpy from apt must stay
+    importable alongside them).
   -->
 
   <test_depend>python3-pytest</test_depend>
