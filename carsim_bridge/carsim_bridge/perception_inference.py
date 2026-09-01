@@ -22,8 +22,10 @@ from PIL import Image as PILImage
 
 # Repo root on sys.path so `perception.*` is importable regardless of how
 # this is launched -- matches the pattern perception/model/train.py already
-# uses for its own cross-package imports.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# uses for its own cross-package imports. "../.." because this file lives
+# two levels under the repo root (carsim_bridge/carsim_bridge/), the
+# standard nested ament_python layout.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from perception.model.lane_cnn import LaneCNN  # noqa: E402
 from perception.model.preprocess import preprocess  # noqa: E402

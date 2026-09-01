@@ -2,18 +2,19 @@ from setuptools import setup
 
 package_name = 'carsim_bridge'
 
-# package_dir maps the package straight onto this directory instead of the
-# usual nested carsim_bridge/carsim_bridge/ ament_python layout. Deliberate:
-# every existing import (this package's own node files, and every test in
-# ../tests/) already assumes autonomous-robot-ackerman/carsim_bridge/ *is*
-# the importable carsim_bridge package -- see tests/test_perception_node.py
-# and tests/test_perception_inference.py, both written and passing against
-# this flat layout before this file existed. Nesting would move every .py
-# file and update every one of those imports for no functional gain.
+# Standard ament_python layout: carsim_bridge/carsim_bridge/ holds the
+# actual module, this file (carsim_bridge/setup.py) is the colcon package
+# root. An earlier version of this file used package_dir={package_name:
+# '.'} to keep the .py files flat in this directory -- switched to the
+# standard nested layout after colcon build --symlink-install failed on
+# the flat mapping (colcon_core.task.python.build assumes the nested
+# convention when building symlinks). tests/test_perception_node.py and
+# tests/test_perception_inference.py were updated to match (second
+# sys.path entry pointing at this directory, alongside the existing one
+# for perception/).
 setup(
     name=package_name,
     version='0.1.0',
-    package_dir={package_name: '.'},
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -23,7 +24,7 @@ setup(
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='Remi Nollet',
-    maintainer_email='you@example.com',
+    maintainer_email='remi.nollet@live.fr',
     description=(
         'ZeroMQ bridge to the macOS MuJoCo sim, dummy controller, and the '
         'lane-perception node.'

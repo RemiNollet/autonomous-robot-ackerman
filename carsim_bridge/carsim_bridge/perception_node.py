@@ -26,6 +26,11 @@ from rclpy.qos import QoSPresetProfiles
 from rclpy.time import Time as RclpyTime
 from sensor_msgs.msg import Image
 
+# One level up, not two: this only needs to resolve its own sibling
+# module (carsim_bridge.perception_inference below), and this file's
+# parent directory IS the outer carsim_bridge/ package root regardless of
+# nesting depth -- unlike perception_inference.py, which reaches all the
+# way to the repo root for `perception.*` and does need "../..".
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from carsim_msgs.msg import LaneState  # noqa: E402

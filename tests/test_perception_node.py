@@ -16,6 +16,11 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Second entry: carsim_bridge is a nested ament_python package
+# (carsim_bridge/carsim_bridge/), so `import carsim_bridge.X` needs the
+# outer carsim_bridge/ directory on sys.path too, not just the repo root
+# that resolves `perception.*` above.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "carsim_bridge"))
 
 torch = pytest.importorskip("torch")
 rclpy = pytest.importorskip("rclpy")
