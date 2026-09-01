@@ -95,3 +95,50 @@ def test_publishes_lane_state_with_propagated_stamp_from_synthetic_image(tmp_che
         assert out.valid == (out.confidence >= node.confidence_threshold)
     finally:
         node.destroy_node()
+
+
+def test_stats_report_fires_after_window_and_resets_buffers(tmp_checkpoint, tmp_path):
+    """Regression test for a real pitfall: get_clock().now() and
+    Time.from_msg(msg.header.stamp) don't share a clock_type by default, and
+    subtracting two rclpy Time objects directly raises when they don't
+    match. stamp is set via the node's own clock (matching what
+    bridge_node.py actually does -- self.get_clock().now().to_msg() at
+    receipt time), so this exercises the real age-at-publish code path, not
+    an arbitrary fixed timestamp."""
+    from sensor_msgs.msg import Image
+
+    stats_path = tmp_path / "stats.md"
+    node = pn.PerceptionNode(parameter_overrides=[
+        Parameter('checkpoint_path', value=tmp_checkpoint),
+        Parameter('device', value='cpu'),
+        Parameter('stats_window_frames', value=5),
+        Parameter('stats_output_path', value=str(stats_path)),
+    ])
+    try:
+        node.pub.publish = lambda msg: None
+
+        rng = np.random.default_rng(2)
+        for _ in range(5):
+            img_arr = rng.integers(0, 256, size=(240, 320, 3), dtype=np.uint8)
+            msg = Image()
+            msg.header.stamp = node.get_clock().now().to_msg()
+            msg.header.frame_id = 'base_link'
+            msg.height, msg.width = 240, 320
+            msg.encoding = 'rgb8'
+            msg.is_bigendian = 0
+            msg.step = 320 * 3
+            msg.data = img_arr.tobytes()
+            node.on_image(msg)
+
+        assert stats_path.exists()
+        content = stats_path.read_text()
+        assert 'preprocess' in content
+        assert 'publish interval' in content
+        assert 'age at publish' in content
+
+        # Window reset after the report -- next frame starts a fresh window,
+        # not an ever-growing list.
+        assert node._t_pre_samples == []
+        assert node._age_samples == []
+    finally:
+        node.destroy_node()

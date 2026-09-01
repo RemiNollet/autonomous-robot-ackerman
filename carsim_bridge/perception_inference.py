@@ -35,6 +35,27 @@ DEFAULT_CHECKPOINT = os.path.join(
 )
 
 
+def distribution_stats(samples_s, scale=1000.0):
+    """seconds -> {n, mean, p50, p95, max, std} in the scaled unit (default
+    ms). np.percentile, matching perception/model/physical_metrics.py's
+    _stats so VM-side telemetry and dataset-side evaluation report
+    percentiles the same way. None on an empty input, not a divide-by-zero
+    -- a report over 0 samples has nothing to summarize, and callers (e.g.
+    the publish-interval series, which has one fewer sample than the frame
+    count) need to tell that apart from a real all-zero series."""
+    if not samples_s:
+        return None
+    a = np.asarray(samples_s, dtype=np.float64) * scale
+    return {
+        "n": int(a.size),
+        "mean": float(a.mean()),
+        "p50": float(np.percentile(a, 50)),
+        "p95": float(np.percentile(a, 95)),
+        "max": float(a.max()),
+        "std": float(a.std()),
+    }
+
+
 def ros_image_to_pil(width: int, height: int, encoding: str, data) -> PILImage.Image:
     """sensor_msgs/Image fields -> PIL Image. Matches carsim_bridge/
     protocol.py's encode_state: packed HxWx3 uint8, encoding="rgb8",
@@ -55,9 +76,12 @@ def load_model(checkpoint_path: str, device: torch.device) -> torch.nn.Module:
 
 
 def run_inference(model: torch.nn.Module, pil_img: PILImage.Image, device: torch.device):
-    """Preprocess + forward pass, timed separately (preprocessing frequently
-    dominates on small models -- knowing which is which matters for the
-    embedded budget). Returns (e_y, e_psi, confidence, t_preprocess_s,
+    """Preprocess + forward pass, timed separately -- the assumption going in
+    was that preprocessing would dominate on a model this small, which
+    matters for the embedded budget; measured Mac-CPU numbers contradicted
+    it (forward ~1.1 ms vs preprocess ~0.26 ms, perception/README.md
+    Latency), so the two stages stay timed separately rather than folded
+    into one number. Returns (e_y, e_psi, confidence, t_preprocess_s,
     t_forward_s) in physical units / [0,1] -- kappa is deliberately not
     returned; the untrained head's output must never reach a caller
     (docs/decisions.md ADR-12)."""

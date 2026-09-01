@@ -352,11 +352,31 @@ volume) not yet automated, since M2 hasn't needed it until now.
 ### Latency
 
 Measured on the **Mac host's CPU** (`torch.device('cpu')`, not MPS), over
-200 real dataset images, timing preprocessing/forward/publish separately as
-required. **Not the VM** -- this session has no access to the running VM to
-measure there directly; the node includes the same three-way timing
-instrumentation (`PerceptionNode.report()`, logged every 2 s) so the real
-number is one deployment away, not re-derived.
+200 real dataset images, timing preprocessing/forward/publish separately.
+This is compute in isolation -- a lower bound, not the rate achievable
+inside the actual ROS2 graph (executor overhead, subscription queueing, the
+ZeroMQ hop none of that touches).
+
+**Not the VM.** The VM was booted and network-reachable this session
+(`192.168.64.4` answered ICMP) but had no open SSH or other execution
+channel available, so nothing could actually be run inside it.
+`perception_node.py` carries the instrumentation for when it can be:
+`on_image` now accumulates raw preprocess/forward/publish samples, the
+wall-clock interval between consecutive `/lane_state` publications
+(actual achieved rate, not derived from the stage timings), and the
+end-to-end age from `header.stamp` to publish. Every `stats_window_frames`
+frames (500 by default, so the report is never based on fewer than the
+task's own floor) it logs the full mean/p50/p95/max/std distribution for
+each series and writes the same table to `stats_output_path` (default
+`/tmp/perception_node_vm_stats.md`) -- see
+[`perception/model/results.md`](model/results.md)'s "VM inference
+frequency" section for the exact collection procedure and, notably, a
+correction to this project's own assumption about what `header.stamp`
+measures: it's stamped by the VM's own clock at ZeroMQ-receipt time, not
+converted from the Mac's render time, so `header.stamp -> publish` is a
+single-clock, graph-internal number -- it does not by itself span the
+Mac->VM hop, which is measured separately and already clock-skew-corrected
+(`/carsim/latency_ms`, ADR-4).
 
 | Stage | mean | p50 | p95 | max |
 |---|---|---|---|---|
@@ -366,15 +386,24 @@ number is one deployment away, not re-derived.
 | **total** | **1.37 ms** | **1.32 ms** | **1.73 ms** | **1.99 ms** |
 
 Implied max rate ~728 Hz, far above the ~30 Hz camera rate -- on this
-hardware, latency is not the bottleneck. One result worth stating plainly
-because it wasn't the expectation going in: **forward pass dominates
-preprocessing here (1.11 ms vs 0.26 ms), not the reverse.** The common rule
-of thumb ("preprocessing dominates on small models") didn't hold on this
-measurement -- PyTorch's per-op eager-mode dispatch overhead across the
-model's ~8 conv layers appears to outweigh the crop/resize/standardize cost
-on a 320x240 source image. Reported as measured; may differ on the VM's
-CPU (different architecture, virtualized) or after ONNX export removes the
-eager-mode dispatch overhead (M4).
+hardware, latency is not the bottleneck.
+
+**A prediction that did not hold: forward pass dominates preprocessing here
+(1.11 ms vs 0.26 ms), not the reverse.** The going-in assumption --
+"preprocessing dominates on small models" -- is real, but it's a fact about
+*depthwise-separable* architectures (MobileNet-style): when every conv is
+decomposed into a near-free depthwise pass plus a small pointwise one, the
+fixed crop/resize/standardize cost on the input pixels stops being small by
+comparison. This network was deliberately built the other way -- full
+`3x3`/`5x5` convs throughout, no depthwise separation (Architecture, above)
+-- specifically because 418k params has room to spend on full convs without
+threatening the embedded budget. That same decision is why the assumption
+doesn't transfer: full convs cost enough per layer, even at `33.2 M` total
+MACs, that PyTorch's per-op eager-mode dispatch overhead across ~8 conv
+layers outweighs the crop/resize/standardize cost on a `320x240` source
+image. Reported as measured, not as the expected result; may shift on the
+VM's CPU (different architecture, virtualized) or after ONNX export removes
+the eager-mode dispatch overhead (M4).
 
 ## What v1 changes, and why
 

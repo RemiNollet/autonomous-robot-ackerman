@@ -19,7 +19,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 torch = pytest.importorskip("torch")
 
-from carsim_bridge.perception_inference import ros_image_to_pil, run_inference
+from carsim_bridge import protocol as P
+from carsim_bridge.perception_inference import (
+    distribution_stats, ros_image_to_pil, run_inference,
+)
 from perception.model.lane_cnn import LaneCNN
 from perception.model.preprocess import preprocess
 
@@ -72,6 +75,48 @@ def test_preprocessing_matches_on_a_real_dataset_image():
     assert np.array_equal(direct, via_node)
 
 
+def test_wire_protocol_roundtrip_is_byte_for_byte_identical_to_direct_load():
+    """The two tests above build BOTH branches from the same already-opened
+    PIL object -- 'raw bytes' there is really 'this object's own pixels,
+    re-serialized', so a PNG-decode quirk affecting both equally would stay
+    invisible. This drives the actual carsim_bridge/protocol.py wire
+    functions end to end -- the exact JSON-header-plus-raw-buffer encode/
+    decode sim_server.py and bridge_node.py use in production, not a
+    hand-rolled equivalent -- so the two branches share no in-memory state:
+    only a numpy array goes in on one side, only bytes come out the other."""
+    img = _make_test_image()
+    direct = preprocess(img)
+
+    arr = np.asarray(img, dtype=np.uint8)
+    frames = P.encode_state(seq=0, t_sim=0.0, pose=(0.0, 0.0, 0.0),
+                             twist=(0.0, 0.0, 0.0), img=arr)
+    header, payload = P.decode_state(frames)
+    via_wire = preprocess(ros_image_to_pil(
+        width=header["img"]["w"], height=header["img"]["h"],
+        encoding=header["img"]["encoding"], data=payload))
+
+    assert np.array_equal(direct, via_wire)
+
+
+@pytest.mark.skipif(not os.path.exists(SAMPLE_IMAGE), reason="dataset not generated locally")
+def test_wire_protocol_roundtrip_matches_a_real_dataset_image():
+    """Same independence guarantee as the synthetic version above, on an
+    actual rendered dataset PNG -- two separate PILImage.open calls, so
+    the 'direct' and 'via_wire' branches don't even share the decoded PNG
+    object, only the file path."""
+    direct = preprocess(PILImage.open(SAMPLE_IMAGE).convert("RGB"))
+
+    arr = np.asarray(PILImage.open(SAMPLE_IMAGE).convert("RGB"), dtype=np.uint8)
+    frames = P.encode_state(seq=0, t_sim=0.0, pose=(0.0, 0.0, 0.0),
+                             twist=(0.0, 0.0, 0.0), img=arr)
+    header, payload = P.decode_state(frames)
+    via_wire = preprocess(ros_image_to_pil(
+        width=header["img"]["w"], height=header["img"]["h"],
+        encoding=header["img"]["encoding"], data=payload))
+
+    assert np.array_equal(direct, via_wire)
+
+
 def test_run_inference_shapes_and_finiteness():
     """Doesn't need a trained checkpoint -- a freshly-initialized model is
     enough to check run_inference's contract: three finite floats out,
@@ -87,3 +132,21 @@ def test_run_inference_shapes_and_finiteness():
     assert all(np.isfinite(v) for v in (e_y, e_psi, confidence))
     assert 0.0 <= confidence <= 1.0
     assert t_pre >= 0.0 and t_fwd >= 0.0
+
+
+def test_distribution_stats_empty_is_none():
+    assert distribution_stats([]) is None
+
+
+def test_distribution_stats_matches_hand_computed_values():
+    # 1..100 ms in seconds: mean 50.5, p50 (numpy linear interp, 50th
+    # percentile of 1..100) 50.5, p95 95.05, max 100, std = pstdev(1..100).
+    samples_s = [i / 1000.0 for i in range(1, 101)]
+    stats = distribution_stats(samples_s, scale=1000.0)
+
+    assert stats["n"] == 100
+    assert stats["mean"] == pytest.approx(50.5)
+    assert stats["p50"] == pytest.approx(50.5)
+    assert stats["p95"] == pytest.approx(95.05)
+    assert stats["max"] == pytest.approx(100.0)
+    assert stats["std"] == pytest.approx(np.std(np.arange(1, 101)))
