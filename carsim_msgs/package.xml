@@ -4,7 +4,7 @@
   <name>carsim_msgs</name>
   <version>0.1.0</version>
   <description>Custom ROS2 interfaces for the Ackerman robot project (perception/control contract).</description>
-  <maintainer email="you@example.com">Remi Nollet</maintainer>
+  <maintainer email="remi.nollet@live.fr">Remi Nollet</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
