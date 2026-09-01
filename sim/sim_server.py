@@ -5,10 +5,11 @@ Joue le role du "plant" (le robot). Il n'y a AUCUNE intelligence ici :
 il expose des capteurs et accepte des commandes actionneur, exactement
 comme le fera le Raspberry Pi + chassis reel en Coree.
 
-    python3 sim_server.py --bind 0.0.0.0
+    python3 sim/sim_server.py --bind 0.0.0.0
 """
 import argparse
 import math
+import os
 import time
 
 import mujoco
@@ -20,6 +21,14 @@ import protocol as P
 WHEELBASE = 0.26   # empattement [m]
 TRACK = 0.21       # voie [m]
 MAX_TORQUE = 2.0   # couple moteur max [N.m]
+
+# Anchored to this file's own location, not the CWD -- the docstring's
+# usage example assumes `cd sim && python3 sim_server.py`, but nothing
+# enforces that; run as `python3 sim/sim_server.py` from the repo root
+# (as everything else in this project is), a CWD-relative "models/car.xml"
+# resolves to a path that doesn't exist.
+DEFAULT_MODEL = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "models", "car.xml")
 
 
 def ackermann(delta):
@@ -38,7 +47,7 @@ def yaw_from_quat(q):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="models/car.xml")
+    ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--bind", default="0.0.0.0")
     ap.add_argument("--state-port", type=int, default=5555)
     ap.add_argument("--cmd-port", type=int, default=5556)
@@ -67,18 +76,20 @@ def main():
     sub.setsockopt(zmq.RCVHWM, 2)
     sub.bind(f"tcp://{args.bind}:{args.cmd_port}")
 
-    print(f"[sim] etat   PUB tcp://{args.bind}:{args.state_port}")
-    print(f"[sim] cmd    SUB tcp://{args.bind}:{args.cmd_port}")
-    print(f"[sim] ctrl {args.ctrl_hz:.0f} Hz | cam "
-          f"{'off' if args.no_camera else f'{cam_hz_real:.1f} Hz reels '
-             f'(1 tick sur {cam_every})'}")
-
     dt_ctrl = 1.0 / args.ctrl_hz
     n_sub = max(1, round(dt_ctrl / model.opt.timestep))
     # Le rendu ne peut se produire qu'a un tick de controle : on force un
     # diviseur entier, sinon le debit derive (30 Hz demandes -> 25 Hz reels).
     cam_every = max(1, round(args.ctrl_hz / args.cam_hz))
     cam_hz_real = args.ctrl_hz / cam_every
+
+    print(f"[sim] etat   PUB tcp://{args.bind}:{args.state_port}")
+    print(f"[sim] cmd    SUB tcp://{args.bind}:{args.cmd_port}")
+    if args.no_camera:
+        cam_status = "off"
+    else:
+        cam_status = f"{cam_hz_real:.1f} Hz reels (1 tick sur {cam_every})"
+    print(f"[sim] ctrl {args.ctrl_hz:.0f} Hz | cam {cam_status}")
 
     seq = 0
     steer_cmd = 0.0
