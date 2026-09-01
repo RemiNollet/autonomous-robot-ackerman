@@ -60,48 +60,65 @@ Confidence: accuracy 0.998 over n_valid=1273, n_invalid=144 (imbalanced ~90/10 -
 | R=5m arc | 0.0499 | 0.1121 | 8.88 | 14.84 | 416 |
 | R=3m arc | 0.0751 | 0.1379 | 12.66 | 19.44 | 256 |
 
-## VM inference frequency -- pending a live graph, not yet measured
+## VM inference frequency -- measured
 
-Mac-CPU numbers above (Latency, `perception/README.md`) are a lower bound
-on compute; they say nothing about the achievable rate inside the actual
-ROS2 graph (executor overhead, subscription queueing, the ZeroMQ hop). That
-requires the bridge + `perception_node` running together in the VM, which
-this session could not reach: the VM (`Linux.utm`) is booted and network-
-reachable (`192.168.64.4` responds to ICMP), but has no open SSH and no
-other execution channel available here, so no command could actually be
-run inside it.
+Measured live on the VM via SSH (`bridge_node` + `perception_node` running
+together, against a real `sim_server.py` on the Mac at 50 Hz state / 25 Hz
+camera), after fixing the `bridge_node` message-drop bug below -- numbers
+taken before that fix would have been measuring a starved, irregular image
+stream, not the perception path itself.
 
-What's ready for whoever runs this next:
+**`/lane_state` publish interval** (4 windows of 300 frames each, ~65 s
+total; `perception_node`'s own `stats_window_frames` instrumentation,
+`perf_counter`, single VM clock):
 
-- `perception_node.py` now accumulates raw sample buffers (`stats_window_frames`
-  parameter, default 500) for `preprocess`/`forward`/`publish`, the
-  wall-clock interval between consecutive `/lane_state` publications
-  (`perf_counter`, single monotonic clock -- the actual achieved rate), and
-  the end-to-end age at publication (`header.stamp` -> publish).
-- Once `stats_window_frames` samples accumulate, it logs a full
-  mean/p50/p95/max/std report for each series and writes the same content
-  as a markdown table to `stats_output_path` (default
-  `/tmp/perception_node_vm_stats.md`) -- built specifically so that file's
-  contents can be pasted directly into this section.
-- **Correction to this task's own framing:** `header.stamp` is not the
-  Mac's camera-render time. `bridge_node.py`'s `poll()` stamps every image
-  with `self.get_clock().now()` -- the VM's own clock, at the moment the VM
-  receives the ZeroMQ frame (`carsim_bridge/bridge_node.py`) -- not a
-  converted Mac timestamp. So `header.stamp -> publish` is single-clock
-  (VM only) and measures graph-internal latency (executor dispatch +
-  preprocess + forward + publish), **not** the Mac->VM ZeroMQ hop. That hop
-  is already measured elsewhere, already clock-skew-corrected: `bridge_node.py`
-  publishes it on `/carsim/latency_ms` using ADR-4's round-trip-sum method
-  (one-way Mac/VM timestamp deltas were the ~30 ms figure ADR-3/ADR-4 found
-  to be predominantly clock skew, not real transit time). The full
-  Mac-render-to-`/lane_state` age is the sum of that figure and the
-  `header.stamp -> publish` number below -- report both, never subtract a
-  Mac timestamp from a VM one directly.
+| Window | mean (ms) | p50 | p95 | max | std |
+|---|---|---|---|---|---|
+| 1 (includes node startup) | 40.02 | 39.79 | 47.07 | 284.47 | 15.81 |
+| 2 | 39.98 | 39.93 | 47.20 | 74.22 | 5.38 |
+| 3 | 40.01 | 40.28 | 47.85 | 52.96 | 4.95 |
+| 4 | 39.96 | 39.97 | 48.92 | 77.22 | 5.99 |
 
-To collect: run `bridge_node.py` and `perception_node.py` together in the
-VM against a live `sim_server.py` on the Mac for >=500 frames (~17 s at the
-~30 Hz camera rate), then read `/tmp/perception_node_vm_stats.md`. Against
-the 20 Hz / 50 ms control-loop target, headroom for acados and the fraction
-of budget perception consumes can only be stated once that number exists --
-not estimated from the Mac figure, since VM CPU, executor overhead, and
-queueing are exactly what the Mac number can't see.
+Mean interval ~40.0 ms = **~25.0 Hz achieved**, matching the camera rate
+exactly -- once `bridge_node` isn't dropping images, `perception_node`
+keeps up with every single frame. Window 1's 284 ms max is a one-time
+startup transient (first inference after model load, page faults, no
+steady-state meaning); windows 2-4 settle to a max of 53-77 ms and a much
+tighter std (5-6 ms) -- that's the number to trust for steady-state jitter.
+
+**Per-stage cost** (same windows, VM CPU): preprocess mean 0.83-0.88 ms,
+forward mean 5.3-5.7 ms (p95 8.7-9.6 ms), publish (msg build) mean ~0.13 ms
+-- forward still dominates preprocess here too, consistent with the Mac
+measurement, though VM forward cost (~5.5 ms) is roughly 5x the Mac's
+(~1.1 ms): expected for virtualized CPU, not a regression.
+
+**Against the 20 Hz / 50 ms control-loop target:** perception's own compute
+(preprocess + forward + publish) costs ~6.5 ms mean, ~10-11 ms at p95 --
+13-22% of the 50 ms budget, leaving 78-87% headroom for acados. Separately,
+worth flagging for M3: perception updates at ~25 Hz (40 ms) while the
+control loop target is 20 Hz (50 ms) -- the two rates aren't a clean
+multiple of each other, so a control tick will not always have a
+brand-new `/lane_state` waiting; the controller needs to tolerate reusing
+the previous frame's estimate on some ticks, not assume a fresh one every
+time.
+
+**End-to-end age (`header.stamp` -> publish):** mean 7.8-8.2 ms, p95
+12.0-12.8 ms, max 15-49 ms (again, the 49 ms max is window 1's startup
+transient). Single-clock, VM-only -- see the correction below for why this
+does not include the Mac->VM ZeroMQ hop, and how to get the full figure.
+
+**Correction that still applies:** `header.stamp` is not the Mac's
+camera-render time. `bridge_node.py`'s `poll()`/`_process_frame()` stamps
+every image with `self.get_clock().now()` -- the VM's own clock, at the
+moment the VM receives the ZeroMQ frame -- not a converted Mac timestamp.
+So `header.stamp -> publish` measures graph-internal latency only (executor
+dispatch + preprocess + forward + publish), **not** the Mac->VM ZeroMQ hop.
+That hop is measured separately, already clock-skew-corrected:
+`bridge_node.py` publishes it on `/carsim/latency_ms` using ADR-4's
+round-trip-sum method (one-way Mac/VM timestamp deltas were the ~30 ms
+figure ADR-3/ADR-4 found to be predominantly clock skew, not real transit
+time) -- measured at 2.5-6.1 ms during this same session, drifting upward
+over the ~2 min run (the same clock-skew drift ADR-3/ADR-4 already
+documented, not a new finding). The full Mac-render-to-`/lane_state` age is
+the sum of that figure and the `header.stamp -> publish` number above --
+never subtract a Mac timestamp from a VM one directly.

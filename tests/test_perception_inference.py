@@ -26,7 +26,7 @@ torch = pytest.importorskip("torch")
 
 from carsim_bridge import protocol as P
 from carsim_bridge.perception_inference import (
-    distribution_stats, ros_image_to_pil, run_inference,
+    distribution_stats, load_model, ros_image_to_pil, run_inference,
 )
 from perception.model.lane_cnn import LaneCNN
 from perception.model.preprocess import preprocess
@@ -137,6 +137,17 @@ def test_run_inference_shapes_and_finiteness():
     assert all(np.isfinite(v) for v in (e_y, e_psi, confidence))
     assert 0.0 <= confidence <= 1.0
     assert t_pre >= 0.0 and t_fwd >= 0.0
+
+
+def test_load_model_raises_on_a_nonexistent_checkpoint_path():
+    """The safety property Part 4 requires: a perception node without its
+    trained weights must refuse to start, not silently construct a
+    randomly-initialised model and publish /lane_state from it. Uses a
+    path that is guaranteed not to exist rather than a tmp_path fixture,
+    since the whole point is that load_model must reject it before ever
+    touching torch.load()."""
+    with pytest.raises(FileNotFoundError):
+        load_model("/definitely/does/not/exist/lane_cnn.pt", torch.device("cpu"))
 
 
 def test_distribution_stats_empty_is_none():

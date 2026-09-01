@@ -27,13 +27,22 @@ from PIL import Image as PILImage
 # standard nested ament_python layout.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+import perception  # noqa: E402
 from perception.model.lane_cnn import LaneCNN  # noqa: E402
 from perception.model.preprocess import preprocess  # noqa: E402
 from perception.model.targets import denormalize_targets  # noqa: E402
 
+# Derived from perception.__file__ (wherever Python actually resolved the
+# import above), not a __file__-relative walk from this file's own location.
+# The walk was fragile in exactly the way this project's build system
+# exposed twice: it assumed a fixed nesting depth between carsim_bridge and
+# perception/, which changed under the ament_python layout refactor and
+# would silently resolve to the wrong place again under any future
+# repackaging -- whereas perception.__file__ is correct by construction
+# under any sys.path/PYTHONPATH setup that got the import to succeed at all.
 DEFAULT_CHECKPOINT = os.path.join(
-    os.path.dirname(__file__), "..", "..", "perception", "model",
-    "checkpoints", "lane_cnn_width1.0_best.pt",
+    os.path.dirname(perception.__file__), "model", "checkpoints",
+    "lane_cnn_width1.0_best.pt",
 )
 
 
@@ -70,6 +79,20 @@ def ros_image_to_pil(width: int, height: int, encoding: str, data) -> PILImage.I
 
 
 def load_model(checkpoint_path: str, device: torch.device) -> torch.nn.Module:
+    """torch.load() already raises FileNotFoundError on a missing path, but
+    that's an accidental property of the underlying call, not a documented
+    contract of this function -- a perception node without its trained
+    weights must refuse to start, not silently fall back to a freshly
+    initialised (i.e. random) model, so the check is made explicit here
+    with a message that says what to do about it, rather than relying on
+    torch's own error surviving unchanged across future refactors."""
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(
+            f"No checkpoint at {checkpoint_path!r}. perception_node refuses "
+            "to start without trained weights rather than publish /lane_state "
+            "from a randomly-initialised model. Train it on the Mac and "
+            "transfer it (scp) -- see perception/README.md's Deployment note."
+        )
     ckpt = torch.load(checkpoint_path, map_location=device)
     model = LaneCNN(width_mult=ckpt["width_mult"]).to(device)
     model.load_state_dict(ckpt["state_dict"])
