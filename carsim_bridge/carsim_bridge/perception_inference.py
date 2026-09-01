@@ -32,8 +32,8 @@ from perception.model.preprocess import preprocess  # noqa: E402
 from perception.model.targets import denormalize_targets  # noqa: E402
 
 DEFAULT_CHECKPOINT = os.path.join(
-    os.path.dirname(__file__), "..", "perception", "model", "checkpoints",
-    "lane_cnn_width1.0_best.pt",
+    os.path.dirname(__file__), "..", "..", "perception", "model",
+    "checkpoints", "lane_cnn_width1.0_best.pt",
 )
 
 
