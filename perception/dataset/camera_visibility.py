@@ -15,10 +15,33 @@ Camera parameters are hard-coded from sim/models/car.xml and verified
 against MuJoCo's computed extrinsics in tests/test_camera_visibility.py.
 If cam_front's pose or fovy changes in the MJCF, that test fails and
 these constants must be updated to match.
+
+Crop-visibility consistency (docs/decisions.md ADR-11 finding 7, closed
+here): `lane_is_visible`/`any_lane_visible` used to count a point "visible"
+if it fell anywhere in the full 320x240 render, but the CNN only ever sees
+`perception/dataset/cnn_input_config.json`'s crop (rows 80:182 -- verified
+to land almost exactly on L_usable at the top (row 80.23 at d=2.356 m) and
+the near-clip artifact boundary at the bottom (ADR-12), i.e. the crop
+already IS "the region that's both real ground and within L_usable" by
+construction, not a coincidence). A point outside the crop but inside the
+full frame was being counted toward MIN_VISIBLE_POINTS even though the
+network never receives it. `point_visible_in_crop` closes that gap; the
+generator's two visibility counts now use it instead of `point_visible`.
 """
 
+import json
 import math
+import os
+
 from perception.dataset.geometry import Track
+
+_CROP_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "cnn_input_config.json")
+with open(_CROP_CONFIG_PATH) as _f:
+    _crop_cfg = json.load(_f)
+CROP_TOP = _crop_cfg["crop"]["top"]
+CROP_LEFT = _crop_cfg["crop"]["left"]
+CROP_BOTTOM = CROP_TOP + _crop_cfg["crop"]["height"]
+CROP_RIGHT = CROP_LEFT + _crop_cfg["crop"]["width"]
 
 # --- Camera parameters, from sim/models/car.xml (cam_front) ---
 CAM_OFFSET_FORWARD = 0.16    # m, along vehicle x, from chassis origin
@@ -118,6 +141,18 @@ def point_visible(px, py, pz, vehicle_x, vehicle_y, vehicle_heading) -> bool:
     return in_frame
 
 
+def point_visible_in_crop(px, py, pz, vehicle_x, vehicle_y, vehicle_heading) -> bool:
+    """Like point_visible, but also requires the pixel to fall within the
+    CNN's actual input crop (CROP_TOP/BOTTOM/LEFT/RIGHT), not merely
+    somewhere in the full render. This is what the dataset generator's
+    visibility counts use -- a point outside the crop is invisible to the
+    network regardless of whether MuJoCo would have rendered it."""
+    u, v, _, in_frame = project_to_pixel(px, py, pz, vehicle_x, vehicle_y, vehicle_heading)
+    if not in_frame:
+        return False
+    return (CROP_LEFT <= u <= CROP_RIGHT) and (CROP_TOP <= v <= CROP_BOTTOM)
+
+
 def count_visible_lane_points(track: Track, vehicle_x, vehicle_y, vehicle_heading,
                                lane_half_width: float) -> int:
     """Count lane-boundary sample points ahead of the vehicle that fall
@@ -133,7 +168,7 @@ def count_visible_lane_points(track: Track, vehicle_x, vehicle_y, vehicle_headin
         for side in (+1.0, -1.0):
             bx = cx + side * lane_half_width * nx
             by = cy + side * lane_half_width * ny
-            if point_visible(bx, by, 0.02, vehicle_x, vehicle_y, vehicle_heading):
+            if point_visible_in_crop(bx, by, 0.02, vehicle_x, vehicle_y, vehicle_heading):
                 count += 1
     return count
 
@@ -165,7 +200,7 @@ def count_visible_lane_points_whole_track(track: Track, vehicle_x, vehicle_y,
         for side in (+1.0, -1.0):
             bx = cx + side * lane_half_width * nx
             by = cy + side * lane_half_width * ny
-            if point_visible(bx, by, 0.02, vehicle_x, vehicle_y, vehicle_heading):
+            if point_visible_in_crop(bx, by, 0.02, vehicle_x, vehicle_y, vehicle_heading):
                 count += 1
     return count
 

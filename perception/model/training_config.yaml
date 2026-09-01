@@ -1,0 +1,44 @@
+# M2 training config -- the default for perception/model/train.py.
+# CLI flags may override individual values for a one-off run, but this file
+# is what a run is compared against: its hash is written into every row of
+# results.md, so two result tables can be diffed without guessing what
+# changed between them.
+#
+# epochs: no early stopping on val loss, deliberately. v0's val split does
+# not measure generalisation (docs/decisions.md ADR-11 finding 5 -- every
+# arc on the track is geometrically identical to its twin, so val performance
+# reflects interpolation quality, not held-out generalisation). Stopping on
+# it would be stopping on noise, and would make separate runs incomparable
+# (different runs would stop at different epochs for no principled reason).
+# A fixed epoch count, chosen from where the per-component loss curves in
+# perception/model/loss_curves.png actually plateau, is more reproducible.
+
+seed: 42
+epochs: 60
+lr: 0.001
+lr_schedule: cosine
+batch_size: 64
+dataset_dir: data/dataset_v0
+lambda_conf: 0.1
+
+# kappa's weight is 0: the point-wise Frenet label is measurably wrong within
+# L_usable (2.36m) of a curvature transition (~42% of the loop). Confirmed,
+# not assumed -- perception/model/kappa_transition_proximity.png: mean
+# |kappa_pred| on straight samples correlates at r=-0.67 with distance to
+# the next transition, plateauing exactly at L_usable. Feeding that gradient
+# in taught the network to contradict the label near every transition, which
+# is worse than merely unhelpful (see results.md). Set to 1.0 to restore the
+# old (pre-ADR-12) equal weighting.
+component_weights:
+  e_y: 1.0
+  e_psi: 1.0
+  kappa: 0.0
+
+augmentation:
+  brightness_range: [0.8, 1.2]
+  contrast_range: [0.8, 1.2]
+  gamma_range: [0.8, 1.25]
+  gaussian_noise_sigma: 0.03
+  max_erasing_patches: 2
+  max_erasing_area_frac: 0.15
+  min_erasing_area_frac: 0.02

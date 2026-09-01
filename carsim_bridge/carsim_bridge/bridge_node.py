@@ -45,7 +45,12 @@ class BridgeNode(Node):
         self.ctx = zmq.Context()
         self.sub = self.ctx.socket(zmq.SUB)
         self.sub.setsockopt(zmq.SUBSCRIBE, b'')
-        self.sub.setsockopt(zmq.RCVHWM, 2)
+        # 50, not 2: with poll() now processing every drained frame (see
+        # drain_state below), this is a real safety margin against a burst
+        # bigger than the largest observed (2, measured empirically under
+        # UTM's virtualised networking -- see drain_state's docstring), not
+        # a number that silently discards anything under normal operation.
+        self.sub.setsockopt(zmq.RCVHWM, 50)
         self.sub.connect(f'tcp://{host}:{state_port}')
 
         self.pub_cmd = self.ctx.socket(zmq.PUB)
@@ -72,25 +77,36 @@ class BridgeNode(Node):
 
     # ------------------------------------------------------------------ #
 
-    def latest_state(self):
-        """Vide la file ZMQ et ne garde que la trame la plus fraiche.
+    def drain_state(self):
+        """Vide la file ZMQ et renvoie TOUTES les trames en attente, dans
+        l'ordre d'arrivee.
 
-        En controle temps reel on veut l'etat le PLUS RECENT, pas le
-        premier de la file : traiter une trame perimee ajoute de la
-        latence pure dans la boucle.
+        Gardait auparavant uniquement la derniere trame (pour ne jamais
+        traiter un etat perime en boucle de controle temps reel), mais
+        mesure sur la VM : le reseau virtualise d'UTM livre par moments 2
+        trames dans la meme fenetre de poll meme avec poll() a 200 Hz,
+        largement plus rapide que la publication a 50 Hz (rafale max
+        observee : 2, jamais plus, sur 1600 ticks a 200 Hz / 8 s). Ne garder
+        que la derniere de chaque rafale jetait ~40% des etats et ~70% des
+        images -- une image sur deux tics seulement, donc statistiquement
+        plus souvent la trame la plus ancienne d'une rafale, la moins
+        susceptible de survivre. Chaque trame drainee ici reste fraiche (elle
+        vient d'arriver dans la meme fenetre de quelques ms) : la traiter
+        n'introduit pas la latence que la version precedente cherchait a
+        eviter.
         """
-        frames = None
+        frames_list = []
         while True:
             try:
-                frames = self.sub.recv_multipart(zmq.NOBLOCK)
+                frames_list.append(self.sub.recv_multipart(zmq.NOBLOCK))
             except zmq.Again:
-                return frames
+                return frames_list
 
     def poll(self):
-        frames = self.latest_state()
-        if frames is None:
-            return
+        for frames in self.drain_state():
+            self._process_frame(frames)
 
+    def _process_frame(self, frames):
         header, img_bytes = P.decode_state(frames)
         stamp = self.get_clock().now().to_msg()
 
