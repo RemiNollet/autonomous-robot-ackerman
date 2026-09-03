@@ -32,7 +32,7 @@ e_y MAE is 5.5% of the lane half-width (0.4 m); p95 is 14.5%. e_psi MAE is 11.9%
 
 Confidence: accuracy 0.995 over n_valid=348, n_invalid=36 (imbalanced ~90/10 -- accuracy alone hides class performance). Per-class: valid recall 1.000, invalid recall 0.944.
 
-**kappa: not reported.** Loss weight is 0 (ADR-12) -- the head is untrained, so any number here would describe initialization drift, not model performance.
+**kappa: not reported.** Loss weight is 0 (ADR-14) -- the head is untrained, so any number here would describe initialization drift, not model performance.
 
 | Curvature bin | e_y MAE (m) | e_y p95 (m) | e_psi MAE (deg) | e_psi p95 (deg) | n |
 |---|---|---|---|---|---|
@@ -52,7 +52,7 @@ e_y MAE is 11.0% of the lane half-width (0.4 m); p95 is 28.6%. e_psi MAE is 22.7
 
 Confidence: accuracy 0.998 over n_valid=1273, n_invalid=144 (imbalanced ~90/10 -- accuracy alone hides class performance). Per-class: valid recall 1.000, invalid recall 0.979.
 
-**kappa: not reported.** Loss weight is 0 (ADR-12) -- the head is untrained, so any number here would describe initialization drift, not model performance.
+**kappa: not reported.** Loss weight is 0 (ADR-14) -- the head is untrained, so any number here would describe initialization drift, not model performance.
 
 | Curvature bin | e_y MAE (m) | e_y p95 (m) | e_psi MAE (deg) | e_psi p95 (deg) | n |
 |---|---|---|---|---|---|
@@ -107,13 +107,22 @@ time.
 transient). Single-clock, VM-only -- see the correction below for why this
 does not include the Mac->VM ZeroMQ hop, and how to get the full figure.
 
-**Correction that still applies:** `header.stamp` is not the Mac's
-camera-render time. `bridge_node.py`'s `poll()`/`_process_frame()` stamps
-every image with `self.get_clock().now()` -- the VM's own clock, at the
-moment the VM receives the ZeroMQ frame -- not a converted Mac timestamp.
-So `header.stamp -> publish` measures graph-internal latency only (executor
-dispatch + preprocess + forward + publish), **not** the Mac->VM ZeroMQ hop.
-That hop is measured separately, already clock-skew-corrected:
+**Correction, now fixed (ADR-13) -- this section describes what was true
+when these numbers were measured, not current behavior.** At the time of
+this measurement, `header.stamp` was not the Mac's camera-render time.
+`bridge_node.py`'s `poll()`/`_process_frame()` stamped every image with
+`self.get_clock().now()` -- the VM's own clock, at the moment the VM
+received the ZeroMQ frame -- not a converted Mac timestamp. ADR-13 fixed
+this: `bridge_node.py` now converts the decoded `t_sim` (MuJoCo's own
+simulation clock) into the ROS stamp, per `docs/lane-state-contract.md`
+section 3. The "end-to-end age" figures above were therefore graph-internal
+latency only (executor dispatch + preprocess + forward + publish) at
+measurement time; post-fix, the same measurement would also include the
+Mac->VM ZeroMQ transit, since `header.stamp` now starts at true render
+time rather than VM-receipt time -- re-measure after ADR-13 rather than
+reusing these numbers as the current age figure.
+
+The Mac->VM hop itself is measured separately, already clock-skew-corrected:
 `bridge_node.py` publishes it on `/carsim/latency_ms` using ADR-4's
 round-trip-sum method (one-way Mac/VM timestamp deltas were the ~30 ms
 figure ADR-3/ADR-4 found to be predominantly clock skew, not real transit

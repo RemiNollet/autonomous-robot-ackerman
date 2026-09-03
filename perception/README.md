@@ -289,7 +289,7 @@ set to 0 as a result (`training_config.yaml`) -- not merely small: a kappa
 output that predicts curvature on straights and near-zero in curves would
 actively steer an MPC feedforward term off a straight line approaching a
 bend, which is worse than publishing nothing. `perception_node` always
-publishes `curvature=0.0` (ADR-12), never the network's raw output.
+publishes `curvature=0.0` (ADR-14), never the network's raw output.
 
 **`L_usable = 2.36 m` caps the M3 preview horizon.** Three independent
 limits were measured (`docs/camera-resolvability.md`): `L_resolvable`
@@ -332,12 +332,16 @@ VM-only, ADR-1) -- `perception_node.py` itself is a thin wrapper around it.
   `numpy.array_equal` to loading the same image directly through the
   training dataset's path (`tests/test_perception_inference.py`).
 - **`header.stamp` is propagated, not re-stamped** -- copied from the
-  incoming image message straight onto the outgoing `LaneState`, closing
-  the M1 timestamp item (`docs/lane-state-contract.md` section 3: the age
-  computation downstream is only exact if every hop forwards the original
-  render time instead of re-stamping with its own receipt time).
+  incoming image message straight onto the outgoing `LaneState`
+  (`docs/lane-state-contract.md` section 3: the age computation downstream
+  is only exact if every hop forwards the original render time instead of
+  re-stamping with its own receipt time). This node's own propagation was
+  always correct; the value it was propagating was not -- `bridge_node.py`
+  stamped with VM-receipt wall-clock time instead of the simulator's own
+  `t_sim`, fixed in ADR-13. The M1 timestamp item is only fully closed as
+  of that fix, not by this node's propagation alone.
 - **`curvature` is always published as exactly `0.0`**, with a comment
-  pointing at ADR-12 -- never the network's raw kappa output, which is
+  pointing at ADR-14 -- never the network's raw kappa output, which is
   untrained initialization drift that could vary unpredictably between
   checkpoints.
 - **`confidence`** is the model's sigmoid output; `valid` is
@@ -412,7 +416,7 @@ the eager-mode dispatch overhead (M4).
   kappa-label problem directly (no more 8 discrete transitions each
   invalidating a point-wise label within 2.36 m) and the discrete-5-value
   target problem (ADR-11 finding 4) at the same time. Would let kappa's
-  loss weight be restored to nonzero for the first time since ADR-12.
+  loss weight be restored to nonzero for the first time since ADR-14.
 - **Domain variation (lighting, texture, worn markings)** -- addresses the
   confidence head being structurally easy (this Limitations section) and
   is the actual justification for this CNN's parameter budget over a
@@ -432,4 +436,4 @@ the eager-mode dispatch overhead (M4).
 - [`docs/dataset/camera_coverage_contact_sheet.png`](../docs/dataset/camera_coverage_contact_sheet.png) --
   visibility filter coverage, 27 poses
 - [`perception/model/results.md`](model/results.md) -- full numeric results
-- [`docs/decisions.md`](../docs/decisions.md) -- ADR-7 through ADR-12
+- [`docs/decisions.md`](../docs/decisions.md) -- ADR-7 through ADR-12, and ADR-14 (kappa)
