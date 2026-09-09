@@ -58,31 +58,36 @@ threshold is crossed at all inside the visible window. `L_representable`
 isn't the smallest of three competing numbers here — it's the only one of
 the three that binds.
 
-Once `N` and `Ts` are chosen (M3, not yet decided), plug them in above to
-get the actual speed ceiling this perception stack imposes.
+**`N = 30`, `Ts = 40 ms`** (`T_preview = 1.2 s`, ADR-19): `v_max =
+L_usable / (N Ts) = 2.356 / 1.2 ≈ 1.96 m/s`. At the current reference
+speed (`v = 1.0 m/s`), the horizon reaches `1.2 m` ahead — comfortably
+under `L_usable`, not a tight fit.
 
 ---
 
+## Resolved
+
+**Quadratic (kappa) relabeling of v0 — done, ADR-18.** This was flagged
+here as an open question during the M3 kickoff investigation; it has
+since been implemented, retrained, measured, and decided (ADR-18,
+`docs/decisions.md`): windowed-relabeled curvature is usable (81.3%
+improvement over the published-zero baseline at the near-join zone, no
+regression on the other three outputs), and the MPC formulation (ADR-19)
+now treats curvature as a real, non-zero parameter rather than the
+always-zero placeholder this section originally described.
+
+**Cubic term — investigated and rejected, ADR-17.** The camera's visible
+window is permanently offset from the vehicle's own origin (it can't see
+the ground under itself), so a fit cubic coefficient carries a geometric
+noise floor comparable to any real transition signal, regardless of
+track or sampling strategy. Independent of the quadratic relabeling item
+above; the two were never the same question (ADR-17's own note).
+
 ## Open questions
 
-**Quadratic (kappa) relabeling of v0 — flagged, not decided.** The M3
-kickoff investigation found that `compute_lane_state`
-(`perception/dataset/geometry.py`) depends only on track geometry
-(`REFERENCE_TRACK`, zero MuJoCo dependency) and the vehicle pose
-`(x, y, heading)` already stored per row in `data/dataset_v0/labels.csv` —
-a windowed quadratic fit could relabel all 4000 samples without
-re-rendering a single image, potentially correcting the kappa labels that
-are wrong within `L_usable` of a curvature transition (ADR-14, ~42% of
-the loop's arc-length). This is a retraining-scale change to the M2
-model, not something implemented or decided here. Not implemented, not
-retrained, no ADR written deciding it — that's a scheduling call against
-the rest of M3/M4, not an architecture decision this page or the ADR log
-should preempt.
-
-Separately and independently: a **cubic** term was investigated and
-rejected (ADR-17) — the camera's visible window is permanently offset
-from the vehicle's own origin (it can't see the ground under itself), so
-a fit cubic coefficient carries a geometric noise floor comparable to any
-real transition signal, regardless of track or sampling strategy. This
-does not affect the quadratic relabeling question above; the two are
-independent and shouldn't be conflated (ADR-17's own note).
+None currently flagged as formulation questions. Two pending
+*measurements*, not decisions: `ddelta`'s hard constraint uses an
+explicitly unmeasured placeholder (`control/mpc/params.py`,
+`DELTA_DOT_MAX_PLACEHOLDER`) pending a bench test, and the acados RTI
+preparation/feedback split needs its own bench measurement before it's
+decided (ADR-19).
