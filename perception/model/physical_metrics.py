@@ -4,11 +4,17 @@ hides: tail behaviour (a controller cares about p95/max, not the mean) and
 per-curvature-bin breakdown (an aggregate can average away a specific
 geometry the model is bad at).
 
-kappa is deliberately absent from this module's output. Its loss weight is
-0 (docs/decisions.md ADR-12) -- the head is untrained, so any statistic
-computed on it would describe initialization drift, not model performance,
-and would look like a result if printed next to e_y/e_psi in the same
-table.
+kappa is deliberately absent from this module's own per-sample/per-bin
+computation. Historically (ADR-14) its loss weight was 0 and the head was
+untrained, so any statistic here would describe initialization drift, not
+model performance -- format_physical_report's default disclaimer covers
+that case. When kappa IS trained (ADR-18, windowed-relabeled curvature),
+its meaningful evaluation is near-join vs away-from-join MAE, which needs
+distance-to-the-next-transition -- not something this generic per-sample
+evaluator has access to -- so that comparison lives in
+perception/model/analyze_adr18_retrain.py instead; format_physical_report
+takes an explicit kappa_note to point there rather than printing a stale
+"not reported" claim.
 """
 
 import numpy as np
@@ -112,12 +118,19 @@ def physical_metrics(model: torch.nn.Module, loader: DataLoader, device: torch.d
 
 
 def format_physical_report(metrics: dict, title: str, in_distribution: bool,
-                            lane_half_width: float, heading_envelope: float) -> str:
+                            lane_half_width: float, heading_envelope: float,
+                            kappa_note: str = None) -> str:
     """Markdown. `in_distribution` controls the framing sentence -- True for
     the usual test split (per docs/decisions.md ADR-11 finding 5, this is
     interpolation on track geometry the model has effectively memorised,
     not generalisation), False for the mirror-generalisation probe (the
-    only v0 evaluation that isn't)."""
+    only v0 evaluation that isn't).
+
+    kappa_note: markdown text to print in place of the default "kappa not
+    reported, loss weight 0" disclaimer -- pass this whenever kappa's loss
+    weight for the run being reported is NOT 0 (the module docstring's
+    "when kappa IS trained" case), so this function never asserts kappa is
+    untrained for a run where it wasn't."""
     e_y, e_psi, conf = metrics["e_y"], metrics["e_psi"], metrics["confidence"]
     lines = [f"### {title}\n"]
 
@@ -165,8 +178,9 @@ def format_physical_report(metrics: dict, title: str, in_distribution: bool,
         f"invalid recall {conf['invalid_recall']:.3f}.\n"
     )
 
-    lines.append("\n**kappa: not reported.** Loss weight is 0 (ADR-12) -- the head is untrained, "
-                  "so any number here would describe initialization drift, not model performance.\n")
+    lines.append("\n" + (kappa_note if kappa_note is not None else
+                  "**kappa: not reported.** Loss weight is 0 (ADR-14) -- the head is untrained, "
+                  "so any number here would describe initialization drift, not model performance.\n"))
 
     lines.append("\n| Curvature bin | e_y MAE (m) | e_y p95 (m) | e_psi MAE (deg) | e_psi p95 (deg) | n |\n"
                   "|---|---|---|---|---|---|\n")
