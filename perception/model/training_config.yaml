@@ -21,18 +21,17 @@ batch_size: 64
 dataset_dir: data/dataset_v0
 lambda_conf: 0.1
 
-# kappa's weight is 0: the point-wise Frenet label is measurably wrong within
-# L_usable (2.36m) of a curvature transition (~42% of the loop). Confirmed,
-# not assumed -- perception/model/kappa_transition_proximity.png: mean
-# |kappa_pred| on straight samples correlates at r=-0.67 with distance to
-# the next transition, plateauing exactly at L_usable. Feeding that gradient
-# in taught the network to contradict the label near every transition, which
-# is worse than merely unhelpful (see results.md). Set to 1.0 to restore the
-# old (pre-ADR-12) equal weighting.
+# kappa's weight was 0 (ADR-14: the point-wise Frenet label is measurably
+# wrong within L_usable of a curvature transition, ~42% of the loop -- see
+# perception/model/kappa_transition_proximity.png, r=-0.67 evidence).
+# Restored to 1.0 (the original, pre-ADR-14 equal weighting) here to
+# retrain against the ADR-18 windowed-relabeled labels
+# (data/dataset_v0/labels.csv, perception/dataset/relabel_curvature.py) --
+# see ADR-18 for whether this is worth keeping.
 component_weights:
   e_y: 1.0
   e_psi: 1.0
-  kappa: 0.0
+  kappa: 1.0
 
 augmentation:
   brightness_range: [0.8, 1.2]

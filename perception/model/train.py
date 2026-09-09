@@ -68,6 +68,57 @@ def config_hash(config: dict) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
 
+def _kappa_intro_paragraph(config: dict) -> str:
+    """The results.md intro paragraph explaining kappa's loss weight for
+    this run -- conditional on the actual config value (ADR-14's
+    zero-weight rationale when it's 0, ADR-18's retrain rationale when
+    it's not), not a fixed paragraph written assuming kappa=0 always."""
+    weight = config["component_weights"]["kappa"]
+    if weight == 0:
+        return (
+            f"\nkappa's loss weight is {weight}: the point-wise Frenet "
+            "kappa label is measurably wrong within L_usable (2.36m) of a curvature transition "
+            "(~42% of the loop). perception/model/kappa_transition_proximity.png: on straight "
+            "samples, mean|kappa_pred| correlates at r=-0.67 with distance to the next transition, "
+            "plateauing almost exactly at L_usable (0.023 beyond it vs 0.115 within it, a 5x gap) -- "
+            "the network is reading the road correctly and being penalised for it. The MAE/scatter "
+            "numbers below are NOT merely unusable: a kappa output that predicts curvature on "
+            "straights and near-zero in curves would actively steer an MPC feedforward term off a "
+            "straight line approaching a bend. The output head stays in the architecture "
+            "(component_losses still logs kappa's raw, unweighted loss in loss_curves.png for "
+            "monitoring) so a future windowed or continuous-curvature label can reuse it (ADR-14).\n"
+        )
+    return (
+        f"\nkappa's loss weight is {weight} (ADR-18): the point-wise Frenet label's near-transition "
+        "problem (ADR-14) was addressed by relabeling data/dataset_v0/labels.csv with "
+        "perception/dataset/windowed_relabel.windowed_curvature_average -- a weighted average of "
+        "true track curvature over the camera's actual visible window, not a Cartesian polynomial "
+        "fit (which was tried first and rejected: 13-41% biased even on a pure arc with zero "
+        "discontinuity present, see windowed_relabel.py's module docstring). Near-join vs "
+        "away-from-join kappa MAE, and the check that e_y/e_psi/confidence didn't regress from "
+        "retraining, are in perception/model/analyze_adr18_retrain.py's output and ADR-18 "
+        "(docs/decisions.md) -- not in the per-sample table below, which has no notion of "
+        "distance-to-transition.\n"
+    )
+
+
+def _kappa_note(config: dict) -> str:
+    """None when kappa's loss weight is 0 -- format_physical_report's own
+    default disclaimer already covers that case correctly. Non-None
+    otherwise, so a run where kappa IS trained (ADR-18) never gets the
+    "loss weight is 0, untrained" claim printed against it."""
+    if config["component_weights"]["kappa"] == 0:
+        return None
+    return (
+        f"**kappa: loss weight {config['component_weights']['kappa']}, trained.** "
+        "Not evaluated in this per-sample/per-bin table -- its meaningful "
+        "comparison is near-join vs away-from-join MAE (distance to the "
+        "next curvature transition, not available to this generic "
+        "evaluator); see perception/model/analyze_adr18_retrain.py and "
+        "docs/decisions.md ADR-18.\n"
+    )
+
+
 def set_seed(seed: int):
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -365,6 +416,7 @@ def main():
     physical_sections.append(format_physical_report(
         main_physical, title="main (width=1.0), test split", in_distribution=True,
         lane_half_width=LANE_HALF_WIDTH, heading_envelope=POS_HEADING_RANGE,
+        kappa_note=_kappa_note(config),
     ))
 
     if args.skip_ablation:
@@ -414,6 +466,7 @@ def main():
     physical_sections.append(format_physical_report(
         mirror_physical, title="mirror-generalization probe, mirror-twin eval set",
         in_distribution=False, lane_half_width=LANE_HALF_WIDTH, heading_envelope=POS_HEADING_RANGE,
+        kappa_note=_kappa_note(config),
     ))
 
     _write_results(results, config, run_hash, plateaus, physical_sections)
@@ -429,17 +482,7 @@ def _write_results(results: dict, config: dict, run_hash: str, plateaus: dict = 
              "(ADR-11 finding 5 -- every arc is geometrically identical to its twin), so stopping "
              "on it would halt on noise and make runs non-reproducible. Epoch count is fixed, "
              "chosen from where perception/model/loss_curves.png actually plateaus.\n",
-             f"\nkappa's loss weight is {config['component_weights']['kappa']}: the point-wise Frenet "
-             "kappa label is measurably wrong within L_usable (2.36m) of a curvature transition "
-             "(~42% of the loop). perception/model/kappa_transition_proximity.png: on straight "
-             "samples, mean|kappa_pred| correlates at r=-0.67 with distance to the next transition, "
-             "plateauing almost exactly at L_usable (0.023 beyond it vs 0.115 within it, a 5x gap) -- "
-             "the network is reading the road correctly and being penalised for it. The MAE/scatter "
-             "numbers below are NOT merely unusable: a kappa output that predicts curvature on "
-             "straights and near-zero in curves would actively steer an MPC feedforward term off a "
-             "straight line approaching a bend. The output head stays in the architecture "
-             "(component_losses still logs kappa's raw, unweighted loss in loss_curves.png for "
-             "monitoring) so a future windowed or continuous-curvature label can reuse it.\n"]
+             _kappa_intro_paragraph(config)]
     if plateaus:
         lines.append(f"\nPlateau epoch per component (val, main model): {plateaus}\n")
     # No kappa column here on purpose: a per-run MAE number next to the

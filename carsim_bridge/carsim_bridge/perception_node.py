@@ -105,7 +105,7 @@ class PerceptionNode(Node):
         out.header.frame_id = msg.header.frame_id
         out.lateral_error = float(e_y)
         out.heading_error = float(e_psi)
-        # ADR-12: kappa's loss weight is 0 -- the head is kept in the
+        # ADR-14: kappa's loss weight is 0 -- the head is kept in the
         # architecture but was never trained, so its raw output is
         # initialization drift that could vary unpredictably between
         # checkpoints. Publishing it would look like a real curvature signal

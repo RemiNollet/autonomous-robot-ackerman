@@ -19,10 +19,20 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSPresetProfiles
+from rclpy.time import Time as RclpyTime
 from sensor_msgs.msg import Image
 from std_msgs.msg import Float32
 
 from carsim_bridge import protocol as P
+
+
+def sim_time_to_stamp(t_sim):
+    """MuJoCo simulation time (float, seconds since sim start -- sim_server.py's
+    data.time) -> builtin_interfaces/Time. docs/lane-state-contract.md section 3:
+    header.stamp must be the render time, propagated end to end, never the VM's
+    receipt wall-clock -- see docs/decisions.md ADR-13. Module-level, not a
+    method: pure function of t_sim, independently testable."""
+    return RclpyTime(seconds=t_sim).to_msg()
 
 
 class BridgeNode(Node):
@@ -108,7 +118,6 @@ class BridgeNode(Node):
 
     def _process_frame(self, frames):
         header, img_bytes = P.decode_state(frames)
-        stamp = self.get_clock().now().to_msg()
 
         lat_ms = (P.now() - header['t_pub']) * 1e3
         self.lat_sum += lat_ms
@@ -118,16 +127,16 @@ class BridgeNode(Node):
         self.last_seq = header['seq']
         self.pub_lat.publish(Float32(data=float(lat_ms)))
 
-        self.pub_odom.publish(self.make_odom(header, stamp))
+        self.pub_odom.publish(self.make_odom(header))
 
         if img_bytes is not None:
-            self.pub_img.publish(self.make_image(header['img'], img_bytes, stamp))
+            self.pub_img.publish(self.make_image(header, img_bytes))
             self.n_img += 1
 
-    def make_odom(self, header, stamp):
+    def make_odom(self, header):
         p, t = header['pose'], header['twist']
         msg = Odometry()
-        msg.header.stamp = stamp
+        msg.header.stamp = sim_time_to_stamp(header['t_sim'])
         msg.header.frame_id = 'odom'
         msg.child_frame_id = self.frame_id
         msg.pose.pose.position.x = p['x']
@@ -139,9 +148,10 @@ class BridgeNode(Node):
         msg.twist.twist.angular.z = t['yaw_rate']
         return msg
 
-    def make_image(self, meta, payload, stamp):
+    def make_image(self, header, payload):
+        meta = header['img']
         msg = Image()
-        msg.header.stamp = stamp
+        msg.header.stamp = sim_time_to_stamp(header['t_sim'])
         msg.header.frame_id = self.frame_id
         msg.height = meta['h']
         msg.width = meta['w']
