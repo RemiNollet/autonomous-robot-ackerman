@@ -83,11 +83,20 @@ noise floor comparable to any real transition signal, regardless of
 track or sampling strategy. Independent of the quadratic relabeling item
 above; the two were never the same question (ADR-17's own note).
 
+**`ddelta`'s hard constraint — measured, ADR-20.** ADR-19 flagged
+`DELTA_DOT_MAX_PLACEHOLDER = 2.0 rad/s` as an unmeasured, deliberately
+conservative guess (no hardware exists to bench-test, and no rate limit
+is modeled anywhere in `car.xml`). Measured via the sim's own
+position-actuator step response instead (`tools/steering_rate_step_response.py`):
+`DELTA_DOT_MAX = 5.2 rad/s`, using a 2% settling-time criterion on a full
+`-0.6 -> +0.6` rad step. This is an idealized-actuator UPPER BOUND, not a
+conservative estimate — `car.xml`'s position actuators have unlimited
+torque (no `forcerange`), which inflates the settling time this figure
+comes from, not just the peak rate. Re-measure against a torque-limited
+model or real hardware before treating it as safe unmargined (ADR-20).
+
 ## Open questions
 
-None currently flagged as formulation questions. Two pending
-*measurements*, not decisions: `ddelta`'s hard constraint uses an
-explicitly unmeasured placeholder (`control/mpc/params.py`,
-`DELTA_DOT_MAX_PLACEHOLDER`) pending a bench test, and the acados RTI
-preparation/feedback split needs its own bench measurement before it's
-decided (ADR-19).
+None currently flagged as formulation questions. One pending
+*measurement*, not a decision: the acados RTI preparation/feedback split
+needs its own bench measurement before it's decided (ADR-19).
