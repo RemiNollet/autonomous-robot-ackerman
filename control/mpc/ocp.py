@@ -8,13 +8,19 @@ RAW physical units (m, rad, rad, rad/s) -- weight normalization (ADR-19)
 is applied via W = diag(1/envelope^2) per term (control/mpc/params.py),
 not by pre-scaling the residual itself; the two are mathematically
 equivalent for a quadratic cost ((r/s)^2 == r^2 * (1/s^2)) and this way
-the residual expression stays simple to read. Terminal cost uses the same
+the residual expression stays simple to read. Terminal cost residual is
+[e_lat, e_psi, delta - atan(L*kappa)] (kappa=2*c2): the terminal target for
+delta is the curved-reference equilibrium, not 0 unconditionally (terminal-
+cost fix completing ADR-19, docs/decisions.md -- delta=0 was only correct
+because ADR-19 was written when curvature was always 0). Uses the same
 weights (Q=diag(W_E_LAT,W_E_PSI,W_DELTA), R=[[W_U]]) fed into a discrete
 algebraic Riccati equation (scipy.linalg.solve_discrete_are) on the
 linearized error dynamics, evaluated once at a nominal speed
-(params.V_NOMINAL_FOR_DARE) -- acados does not support a speed-varying
-terminal cost without a much more involved parametric-Riccati setup, out
-of scope here.
+(params.V_NOMINAL_FOR_DARE) and kept kappa-agnostic (checked: <=0.62% max
+entrywise effect at this track's tightest curvature, see
+_terminal_dare_matrix's own docstring) -- acados does not support a
+speed- or curvature-varying terminal cost weight without a much more
+involved parametric-Riccati setup, out of scope here.
 
 Constraints: delta hard-bounded (params.DELTA_MAX, measured -- car.xml's
 own steering joint range). ddelta hard-bounded (params.DELTA_DOT_MAX,
@@ -84,6 +90,22 @@ def _terminal_dare_matrix() -> np.ndarray:
     discretized with a first-order (Euler) hold at Ts -- an approximation
     specific to this linearization, not the ERK integration the OCP's
     actual stage dynamics use.
+
+    Linearized about delta=0 (kappa=0) regardless of the actual reference
+    curvature, even though the terminal cost's target delta is now
+    atan(L*kappa) rather than 0 (terminal-cost fix completing ADR-19,
+    docs/decisions.md). This is a deliberate, checked approximation, not an
+    oversight: re-linearizing tan(delta) about the true equilibrium
+    delta_eq=atan(L*kappa) instead of 0 changes the e_psi/delta coupling
+    term from v/L to (v/L)*(1+(L*kappa)^2) (sec^2(delta_eq)); at this
+    track's tightest curvature (kappa_max=1/R_min=0.333 1/m,
+    L*kappa_max=0.0867) that changes the resulting P by 0.26% (Frobenius
+    norm) / 0.62% (max entry) -- smaller than the Euler-vs-ERK4 and
+    single-nominal-speed approximations this same computation already
+    makes, and acados' W_e must be a fixed numeric matrix in any case (a
+    kappa-varying P needs the same parametric-Riccati machinery already
+    ruled out of scope above for a speed-varying one). Kept kappa-agnostic
+    on that basis, not left unexamined.
     """
     v = V_NOMINAL_FOR_DARE
     A_c = np.array([
@@ -130,8 +152,24 @@ def build_ocp(c0: float = 0.0, c1: float = 0.0, c2: float = 0.0, v: float = 1.0)
     ocp.cost.W = np.diag([W_E_LAT, W_E_PSI, W_DELTA, W_U])
 
     # --- cost: NONLINEAR_LS, terminal (DARE) --------------------------
+    # Terminal target for delta is NOT unconditionally 0: the true terminal
+    # equilibrium on a curved reference (kappa = 2*c2, lane-state-
+    # contract.md section 1) is delta_eq = atan(L*kappa) -- at
+    # equilibrium, e_psi_dot = (v/L)*tan(delta) - v*kappa = 0 requires
+    # tan(delta) = L*kappa. Folded into the residual itself
+    # (cost_y_expr_e), not into yref_e: acados' NONLINEAR_LS cost only
+    # supports a constant numeric yref/yref_e, not a parameter-dependent
+    # one -- cost_y_expr_e is the symbolic side that CAN depend on
+    # model.p (c0,c1,c2,v), the same pattern e_lat/e_psi already use for
+    # their own (X-dependent) reference. yref_e stays all-zero; on a
+    # straight reference (c2=0, kappa=0) this residual reduces to
+    # delta - atan(0) = delta - 0, so straight-case behavior is
+    # unchanged (verified in sanity_check.py).
+    kappa_ref = 2 * model.p[2]
+    delta_eq = ca.atan(L * kappa_ref)
+
     ocp.cost.cost_type_e = "NONLINEAR_LS"
-    ocp.model.cost_y_expr_e = ca.vertcat(e_lat, e_psi, delta)
+    ocp.model.cost_y_expr_e = ca.vertcat(e_lat, e_psi, delta - delta_eq)
     ocp.cost.yref_e = np.zeros(3)
     ocp.cost.W_e = _terminal_dare_matrix()
 

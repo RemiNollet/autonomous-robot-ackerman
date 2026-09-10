@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 
 from control.mpc.ocp import build_ocp, solve_fixed_reference
-from control.mpc.params import DELTA_DOT_MAX_PLACEHOLDER, DELTA_MAX, L, N_HORIZON, R_MIN
+from control.mpc.params import DELTA_DOT_MAX, DELTA_MAX, L, N_HORIZON, R_MIN
 from perception.dataset.track_definitions import REFERENCE_TRACK
 from perception.dataset.windowed_relabel import windowed_curvature_average
 
@@ -71,10 +71,10 @@ def report_case(name, c0, c1, c2, v):
           f"(|decreased|: {abs(e_lat[-1]) < abs(e_lat[0]) or abs(e_lat[0]) < 1e-9})")
     print(f"  e_psi: t=0 -> {e_psi[0]:+.6f} rad, end -> {e_psi[-1]:+.6f} rad "
           f"(|decreased|: {abs(e_psi[-1]) < abs(e_psi[0]) or abs(e_psi[0]) < 1e-9})")
-    ddelta_sat = bool(np.any(np.abs(U[:, 0]) >= 0.999 * DELTA_DOT_MAX_PLACEHOLDER))
+    ddelta_sat = bool(np.any(np.abs(U[:, 0]) >= 0.999 * DELTA_DOT_MAX))
     delta_sat = bool(np.any(np.abs(delta_traj) >= 0.999 * DELTA_MAX))
     print(f"  ddelta saturates anywhere in horizon: {ddelta_sat} "
-          f"(max |ddelta|={np.max(np.abs(U[:,0])):.4f} vs limit {DELTA_DOT_MAX_PLACEHOLDER})")
+          f"(max |ddelta|={np.max(np.abs(U[:,0])):.4f} vs limit {DELTA_DOT_MAX})")
     print(f"  delta saturates anywhere in horizon: {delta_sat} "
           f"(max |delta|={np.max(np.abs(delta_traj)):.4f} vs limit {DELTA_MAX})")
 
@@ -124,10 +124,10 @@ def main():
     print("\n-- saturation on small offsets (miscalibrated-weight symptom) --")
     for name in ["4a. lateral offset +0.1 m", "5a. heading offset +0.1 rad"]:
         r = results[name]
-        sat = bool(np.any(np.abs(r["U"][:, 0]) >= 0.999 * DELTA_DOT_MAX_PLACEHOLDER))
+        sat = bool(np.any(np.abs(r["U"][:, 0]) >= 0.999 * DELTA_DOT_MAX))
         print(f"  {name}: ddelta saturates = {sat}, "
               f"first ddelta={r['delta_first']:+.6f} rad/s "
-              f"({r['delta_first']/DELTA_DOT_MAX_PLACEHOLDER*100:.1f}% of the limit)")
+              f"({r['delta_first']/DELTA_DOT_MAX*100:.1f}% of the limit)")
 
     print("\n-- left/right symmetry (mirrored offset -> mirrored control) --")
     for pair in [("4a. lateral offset +0.1 m", "4b. lateral offset -0.1 m (mirror of 4a)"),
