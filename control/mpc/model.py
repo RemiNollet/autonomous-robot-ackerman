@@ -15,8 +15,8 @@ State x = [X, Y, psi, delta]:
   delta  -- steering angle
 
 Control u = [ddelta] (steering RATE, not angle): the OCP controls the
-rate directly and constrains it (params.DELTA_DOT_MAX_PLACEHOLDER,
-unmeasured -- see that module), a standard choice for lane-keeping MPC:
+rate directly and constrains it (params.DELTA_DOT_MAX, measured -- ADR-20,
+see that module), a standard choice for lane-keeping MPC:
 it gives direct authority over how fast delta moves and makes delta a
 state the cost/constraints act on smoothly, rather than a discontinuous
 control input.

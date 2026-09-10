@@ -17,14 +17,13 @@ terminal cost without a much more involved parametric-Riccati setup, out
 of scope here.
 
 Constraints: delta hard-bounded (params.DELTA_MAX, measured -- car.xml's
-own steering joint range). ddelta hard-bounded
-(params.DELTA_DOT_MAX_PLACEHOLDER -- UNMEASURED, see that constant's own
-docstring; this is a conservative placeholder pending a bench test, not a
-real number, flagged again here so it can't quietly become one). e_lat
-SOFT-constrained (slacked) at +-LANE_HALF_WIDTH: a receding-horizon
-controller should be able to command its way back toward the lane rather
-than report infeasible if a disturbance briefly pushes e_lat past the
-lane edge within the horizon.
+own steering joint range). ddelta hard-bounded (params.DELTA_DOT_MAX,
+measured -- ADR-20, see that constant's own docstring: car.xml's own
+position-actuator step response, not a bench test against real hardware,
+since none exists yet). e_lat SOFT-constrained (slacked) at
++-LANE_HALF_WIDTH: a receding-horizon controller should be able to
+command its way back toward the lane rather than report infeasible if a
+disturbance briefly pushes e_lat past the lane edge within the horizon.
 
 Solver: ERK (4-stage, acados' default RK order for integrator_type='ERK')
 for the actual dynamics integration -- note this is DIFFERENT from the
@@ -40,7 +39,7 @@ import scipy.linalg
 
 from control.mpc.model import kinematic_bicycle_model
 from control.mpc.params import (
-    DELTA_DOT_MAX_PLACEHOLDER, DELTA_MAX, L, N_HORIZON, TS,
+    DELTA_DOT_MAX, DELTA_MAX, L, N_HORIZON, TS,
     V_NOMINAL_FOR_DARE, W_DELTA, W_E_LAT, W_E_PSI, W_U,
 )
 
@@ -141,12 +140,12 @@ def build_ocp(c0: float = 0.0, c1: float = 0.0, c2: float = 0.0, v: float = 1.0)
     ocp.constraints.ubx = np.array([DELTA_MAX])
     ocp.constraints.idxbx = np.array([3])
 
-    # --- constraints: hard-PLACEHOLDER on ddelta (control) ------------
-    # UNMEASURED (params.DELTA_DOT_MAX_PLACEHOLDER docstring) -- pending a
-    # bench test. TODO(bench test): replace with a measured value before
-    # this is used for anything beyond formulation validation.
-    ocp.constraints.lbu = np.array([-DELTA_DOT_MAX_PLACEHOLDER])
-    ocp.constraints.ubu = np.array([DELTA_DOT_MAX_PLACEHOLDER])
+    # --- constraints: hard on ddelta (control) -------------------------
+    # MEASURED (params.DELTA_DOT_MAX docstring, ADR-20) -- the sim's own
+    # position-actuator step response, not a real hardware bench test
+    # (none exists yet).
+    ocp.constraints.lbu = np.array([-DELTA_DOT_MAX])
+    ocp.constraints.ubu = np.array([DELTA_DOT_MAX])
     ocp.constraints.idxbu = np.array([0])
 
     # --- constraints: SOFT on e_lat (nonlinear h, slacked) -------------
