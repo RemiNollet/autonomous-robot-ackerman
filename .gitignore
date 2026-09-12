@@ -31,6 +31,7 @@ codegen_ocp_*/
 acados_ocp.json
 *_acados_ocp.json
 control/mpc/cpp/build/
+control/mpc/*_log.npz
 
 # --- Datasets (large binary — see dataset README for retrieval/generation instead) ---
 data/

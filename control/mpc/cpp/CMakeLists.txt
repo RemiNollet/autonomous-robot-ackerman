@@ -23,7 +23,7 @@ endif()
 # header comment).
 if(NOT DEFINED ACADOS_CODEGEN_DIR)
     set(ACADOS_CODEGEN_DIR
-        "${CMAKE_SOURCE_DIR}/../../../codegen_ocp_lateral_mpc_kinematic_bicycle_3d70c8ac")
+        "${CMAKE_SOURCE_DIR}/../../../codegen_ocp_lateral_mpc_kinematic_bicycle_3eb76065")
 endif()
 get_filename_component(ACADOS_CODEGEN_DIR "${ACADOS_CODEGEN_DIR}" ABSOLUTE)
 
@@ -51,7 +51,7 @@ target_link_directories(mpc_standalone PRIVATE
 )
 
 target_link_libraries(mpc_standalone PRIVATE
-    acados_ocp_solver_ocp_lateral_mpc_kinematic_bicycle_3d70c8ac
+    acados_ocp_solver_ocp_lateral_mpc_kinematic_bicycle_3eb76065
     acados
     hpipm
     blasfeo

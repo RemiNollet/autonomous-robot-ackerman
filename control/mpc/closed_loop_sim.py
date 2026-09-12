@@ -349,6 +349,30 @@ def main():
                   f"peak |lateral_error| mean={np.mean(peak_lat):.4f} max={np.max(peak_lat):.4f}  "
                   f"peak |heading_error| mean={np.mean(peak_psi):.4f} max={np.max(peak_psi):.4f}")
 
+    # --- steady-state (deep-plateau) bias, grouped by kappa level ----------
+    # "Deep" plateau: far enough from any join that the join-transient has
+    # settled out (>2.0 m, comfortably beyond the near_join<1.0m band used
+    # above) -- isolates the STEADY-STATE residual bias on a sustained
+    # constant-curvature segment from the transient peak already reported
+    # per-join above. Grouped by kappa level (0, R2=1/5, R1=1/3) to check
+    # whether that steady-state bias scales with kappa -- signed mean, not
+    # |.|, since a systematic bias (not just transient magnitude) is what's
+    # being checked for here.
+    deep = (log["join_dist"] >= 2.0) & warm
+    for label, kappa_lo, kappa_hi in [("straight (kappa=0)", -0.01, 0.01),
+                                        ("R=5m (kappa=0.2)", 0.15, 0.25),
+                                        ("R=3m (kappa=0.333)", 0.28, 0.38)]:
+        m = deep & (log["kappa"] >= kappa_lo) & (log["kappa"] <= kappa_hi)
+        if m.any():
+            print(f"\nsteady-state, {label}, {m.sum()} steps: "
+                  f"lateral_error mean={log['lateral_error'][m].mean():+.5f} std={log['lateral_error'][m].std():.5f}  "
+                  f"heading_error mean={log['heading_error'][m].mean():+.5f} std={log['heading_error'][m].std():.5f}")
+
+    # --- save raw arrays, for reuse without re-running -----------------------
+    npz_path = os.path.join(args.out_dir, f"{args.tag}_log.npz")
+    np.savez(npz_path, **log)
+    print(f"\nraw log arrays saved to {npz_path}")
+
     # --- plot ---------------------------------------------------------------
     fig, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
 

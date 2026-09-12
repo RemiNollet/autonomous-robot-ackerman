@@ -1,5 +1,5 @@
 """
-Shared constants for the lateral MPC (ADR-19).
+Shared constants for the lateral MPC (ADR-19; cost weight tuning ADR-22).
 
 Physical constants are imported from where they're already established in
 this project rather than restated, so this can't silently drift from the
@@ -56,6 +56,28 @@ DELTA_MAX = 0.6
 # as safe to use unmargined; re-measure against a torque-limited model or
 # real hardware if/when it exists (see ADR-20's caveat for the full
 # reasoning).
+#
+# Kept at the raw 5.2 (ADR-22), NOT margined down to a candidate 3.1
+# (0.6x) considered during cost weight tuning -- that margin was motivated
+# by the measurement's own idealization (unlimited actuator torque,
+# uncalibrated PD gains), a concern about THIS CONSTANT, not about how
+# hard any particular scenario drives it. Conflating the two would have
+# meant re-deriving a safety margin from a tuning sweep's worst case
+# instead of from the measurement's actual uncertainty -- the wrong
+# question. The worst case found during tuning (sanity_check.py's own
+# "case 6": combined large offset + tight curvature) saturates this
+# constraint at the final S=2 weights (83.9% of 5.2, ADR-22) -- accepted
+# as intentional, safe degradation (acados still returns solve status 0,
+# command stays bounded at exactly this limit, not undefined or
+# diverging), not a failure mode: case 6's scenario resembles a
+# perception-dropout-recovery transient (a sudden large lateral/heading
+# error coinciding with high curvature), which is its own separately-
+# scoped follow-up task, not something this constant needs to absorb
+# margin for pre-emptively.
+#
+# Still explicitly a SIM-ONLY idealized ceiling, not a validated safety
+# bound -- re-characterize against real hardware in M4 before relying on
+# it there.
 DELTA_DOT_MAX = 5.2
 
 # --- Track / perception envelope -------------------------------------------
@@ -73,9 +95,31 @@ N_HORIZON = 30  # steps -> T_preview = N*Ts = 1.2 s
 # applied to the residual directly; here to the weight, since acados' NLS
 # cost takes a weight matrix rather than requiring the residual itself to
 # be pre-scaled -- mathematically equivalent: (r/s)^2 == r^2 * (1/s^2)).
-W_E_LAT = 1.0 / LANE_HALF_WIDTH ** 2
-W_E_PSI = 1.0 / POS_HEADING_RANGE ** 2
+#
+# q_y (W_E_LAT) and q_psi (W_E_PSI) are scaled ISOTROPICALLY from that
+# normalized baseline by a common factor (ADR-22) -- together, not
+# independently: a q_psi-only sweep found the two are coupled through the
+# single steering DOF (weighting heading error harder measurably worsened
+# lateral tracking's own steady-state bias), so tuning one in isolation
+# was the wrong experiment. S=2 chosen from a sweep of S in
+# {1, 1.5, 2, 3}: cuts transition overshoot ~20% (peak e_lat/e_psi at both
+# R=3m/R=5m joins) vs S=1 while keeping the worst-case combined-
+# disturbance scenario (sanity_check.py's own "case 6") at 83.9% of
+# DELTA_DOT_MAX -- S=3 reached 94.7%, too little margin left against
+# DELTA_DOT_MAX's own measurement-uncertainty caveat (see that constant's
+# docstring). Full sweep data and reasoning in ADR-22.
+_Q_ISOTROPIC_SCALE = 2.0  # ADR-22
+
+W_E_LAT = _Q_ISOTROPIC_SCALE / LANE_HALF_WIDTH ** 2
+W_E_PSI = _Q_ISOTROPIC_SCALE / POS_HEADING_RANGE ** 2
 W_DELTA = 1.0 / DELTA_MAX ** 2
+
+# r_delta_dot (W_U) UNCHANGED from its original normalized value -- ADR-22
+# also tested loosening it (x0.5) alongside S=2, which cut overshoot
+# further but hit EXACTLY 100% of DELTA_DOT_MAX on case 6 (clipped, not
+# just close): no margin left against a limit already flagged as
+# measurement-uncertain (see DELTA_DOT_MAX's own docstring). Kept at its
+# original weight on that basis.
 W_U = 1.0 / DELTA_DOT_MAX ** 2
 
 # Nominal speed for the DARE terminal-cost linearization (ADR-19): the
