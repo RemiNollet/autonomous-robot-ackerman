@@ -112,10 +112,11 @@ def test_stats_report_fires_after_window_and_resets_buffers(tmp_checkpoint, tmp_
     """Regression test for a real pitfall: get_clock().now() and
     Time.from_msg(msg.header.stamp) don't share a clock_type by default, and
     subtracting two rclpy Time objects directly raises when they don't
-    match. stamp is set via the node's own clock (matching what
-    bridge_node.py actually does -- self.get_clock().now().to_msg() at
-    receipt time), so this exercises the real age-at-publish code path, not
-    an arbitrary fixed timestamp."""
+    match. stamp is set via the node's own wall clock here -- NOT
+    bridge_node.py's real sim-clock-relative stamp (ADR-13), which has its
+    own dedicated regression test below -- this one only needs SOME
+    clock_type-correct stamp to exercise the age-at-publish code path and
+    confirm the stats report/reset machinery around it."""
     from sensor_msgs.msg import Image
 
     stats_path = tmp_path / "stats.md"
@@ -151,5 +152,59 @@ def test_stats_report_fires_after_window_and_resets_buffers(tmp_checkpoint, tmp_
         # not an ever-growing list.
         assert node._t_pre_samples == []
         assert node._age_samples == []
+    finally:
+        node.destroy_node()
+
+
+def test_age_calibration_handles_sim_clock_vs_wall_clock_offset(tmp_checkpoint):
+    """header.stamp is t_sim (sim-clock-relative, small numbers -- ADR-13),
+    NOT wall-clock epoch time; self.get_clock().now() IS wall-clock epoch
+    (no node in this graph sets use_sim_time). Directly subtracting them --
+    what this node's age telemetry used to do -- gives an astronomically
+    large "age" instead of a millisecond-scale one; this was silently live
+    from ADR-13 until ADR-25 ported mpc_node.py's calibration
+    (tests/test_mpc_node.py's test_age_calibration_handles_sim_clock_vs_
+    wall_clock_offset, this test's template) back into this node. Confirm
+    the shared AgeCalibrator corrects for it here too, not just that
+    on_image runs."""
+    from sensor_msgs.msg import Image
+
+    node = pn.PerceptionNode(parameter_overrides=[
+        Parameter('checkpoint_path', value=tmp_checkpoint),
+        Parameter('device', value='cpu'),
+    ])
+    try:
+        node.pub.publish = lambda msg: None
+
+        def make_image(sec, nanosec):
+            rng = np.random.default_rng(3)
+            img_arr = rng.integers(0, 256, size=(240, 320, 3), dtype=np.uint8)
+            msg = Image()
+            msg.header.stamp.sec = sec
+            msg.header.stamp.nanosec = nanosec
+            msg.header.frame_id = 'base_link'
+            msg.height, msg.width = 240, 320
+            msg.encoding = 'rgb8'
+            msg.is_bigendian = 0
+            msg.step = 320 * 3
+            msg.data = img_arr.tobytes()
+            return msg
+
+        # sec=5: a plausible t_sim value, nowhere near wall-clock epoch
+        # time (north of 1.7 billion) -- exactly the mismatch ADR-13
+        # introduced between header.stamp and self.get_clock().now().
+        node.on_image(make_image(sec=5, nanosec=0))
+        node.on_image(make_image(sec=5, nanosec=0))
+
+        assert len(node._age_samples) == 2
+        # First observation calibrates the offset -- always reads as
+        # age=0 by construction (the module's own documented cold-start
+        # artifact), not "wrong", just the first sample defining the
+        # baseline.
+        assert node._age_samples[0] == pytest.approx(0.0, abs=1e-3)
+        # A later call against the same stamp must not explode into a
+        # multi-decade number just because sec=5 is nowhere near actual
+        # epoch time -- it should stay a small, sane age.
+        assert 0.0 <= node._age_samples[1] < 1.0
     finally:
         node.destroy_node()

@@ -24,17 +24,19 @@ Design decisions this file makes (ADR-24):
    staleness ticket or hardware integration to revisit.
 
 2. **Delay compensation (ADR-13's t_sim fix, used for the first time)
-   needs a clock-offset calibration this project doesn't have yet.**
+   needs a clock-offset calibration this project didn't have yet.**
    `header.stamp` is `t_sim` (sim-clock-relative, RclpyTime(seconds=t_sim)
    in bridge_node.py's sim_time_to_stamp) -- NOT wall-clock epoch time,
    and no node in this graph sets `use_sim_time`. Directly subtracting
    `self.get_clock().now()` (wall-clock epoch) from `header.stamp`
    (sim-clock, small numbers) -- which is exactly what
-   perception_node.py's own age-telemetry already does -- produces a
-   huge, meaningless number, not a millisecond-scale age (confirmed
-   while building this: that existing telemetry has been silently wrong
-   since ADR-13 landed, flagged separately, not fixed in this file).
-   This node calibrates instead: tracks the MINIMUM observed
+   perception_node.py's own age-telemetry used to do -- produces a huge,
+   meaningless number, not a millisecond-scale age (confirmed while
+   building this: that existing telemetry had been silently wrong since
+   ADR-13 landed; ADR-25 later ported this same calibration back into
+   perception_node.py instead of leaving it divergent). This node
+   calibrates instead, via the shared `AgeCalibrator`
+   (carsim_bridge/clock_utils.py, ADR-25): tracks the MINIMUM observed
    `wall_now_ns - stamp_ns` across all messages seen (a proxy for the
    zero-latency clock offset, since if the sim runs in realtime the only
    thing that should vary message-to-message is real pipeline latency,
@@ -71,7 +73,6 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSPresetProfiles
-from rclpy.time import Time as RclpyTime
 
 # Two levels up, not one: this needs `control.mpc.*` at the repo root, the
 # same reach perception_inference.py needs for `perception.*` (both files
@@ -80,6 +81,7 @@ from rclpy.time import Time as RclpyTime
 # resolve a sibling module inside this same package.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from carsim_bridge.clock_utils import AgeCalibrator  # noqa: E402
 from carsim_msgs.msg import LaneState  # noqa: E402
 from control.mpc.ocp import build_ocp, solve_fixed_reference  # noqa: E402
 from control.mpc.params import DELTA_MAX, L, TS  # noqa: E402
@@ -153,10 +155,11 @@ class MpcNode(Node):
         self.v_integral = 0.0
         self.n_fail_consecutive = 0
 
-        # Clock-offset calibration (ADR-24, point 2) -- running minimum of
-        # (wall_now - header.stamp), a proxy for the sim<->wall clock's
-        # constant offset, refined as more messages arrive.
-        self._min_offset_ns = None
+        # Clock-offset calibration (ADR-24, point 2; ADR-25 extracted this
+        # into a shared helper also used by perception_node.py) -- running
+        # minimum of (wall_now - header.stamp), a proxy for the sim<->wall
+        # clock's constant offset, refined as more messages arrive.
+        self._age_calibrator = AgeCalibrator()
 
         self.n_solves = 0
         self.n_solve_failures = 0
@@ -170,12 +173,8 @@ class MpcNode(Node):
         self.have_odom = True
 
     def _age_s(self, stamp) -> float:
-        wall_now_ns = self.get_clock().now().nanoseconds
-        stamp_ns = RclpyTime.from_msg(stamp).nanoseconds
-        offset_ns = wall_now_ns - stamp_ns
-        if self._min_offset_ns is None or offset_ns < self._min_offset_ns:
-            self._min_offset_ns = offset_ns
-        return max(0.0, (offset_ns - self._min_offset_ns) * 1e-9)
+        now_ns = self.get_clock().now().nanoseconds
+        return self._age_calibrator.age_s(now_ns, stamp)
 
     def on_lane_state(self, msg: LaneState):
         t0 = time.perf_counter()

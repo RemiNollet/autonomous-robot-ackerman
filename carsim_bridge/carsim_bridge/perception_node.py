@@ -23,7 +23,6 @@ import rclpy
 import torch
 from rclpy.node import Node
 from rclpy.qos import QoSPresetProfiles
-from rclpy.time import Time as RclpyTime
 from sensor_msgs.msg import Image
 
 # One level up, not two: this only needs to resolve its own sibling
@@ -34,6 +33,7 @@ from sensor_msgs.msg import Image
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from carsim_msgs.msg import LaneState  # noqa: E402
+from carsim_bridge.clock_utils import AgeCalibrator  # noqa: E402
 from carsim_bridge.perception_inference import (  # noqa: E402
     DEFAULT_CHECKPOINT, distribution_stats, load_model, ros_image_to_pil,
     run_inference,
@@ -100,6 +100,11 @@ class PerceptionNode(Node):
         self._interval_samples = []
         self._age_samples = []
         self._last_publish_perf = None
+        # Clock-offset calibration for the age-at-publish telemetry below
+        # (ADR-25, ported from mpc_node.py's ADR-24 delay compensation --
+        # see clock_utils.AgeCalibrator's docstring for why this is needed
+        # instead of a direct now() - header.stamp subtraction).
+        self._age_calibrator = AgeCalibrator()
 
         self.get_logger().info(
             f'perception_node actif  checkpoint={checkpoint_path}  device={self.device}')
@@ -149,20 +154,21 @@ class PerceptionNode(Node):
         self._last_publish_perf = t3
 
         # End-to-end age at publication: this node's publish time minus
-        # msg.header.stamp, both read from the VM's own ROS clock. NOT a
-        # Mac/VM cross-clock measurement and does NOT span the ZeroMQ hop --
-        # bridge_node.py stamps every image with self.get_clock().now() at
-        # the moment IT receives the frame (carsim_bridge/bridge_node.py
-        # poll()), not with the Mac's render time. The Mac->VM hop itself is
-        # already measured, clock-skew-corrected (ADR-4's round-trip-sum
-        # method), and published separately on /carsim/latency_ms -- add
-        # that to this number for the full Mac-render-to-lane_state age.
-        # .nanoseconds (plain int), not Time.__sub__ -- get_clock().now() and
-        # Time.from_msg() don't default to the same rclpy clock_type, and
-        # subtracting two Time objects directly raises unless they match.
+        # msg.header.stamp. NOT a Mac/VM cross-clock measurement and does
+        # NOT span the ZeroMQ hop -- bridge_node.py stamps every image with
+        # sim-clock-relative time (ADR-13, sim_time_to_stamp), not its own
+        # receipt wall-clock time and not the Mac's render time. Since no
+        # node in this graph sets use_sim_time, self.get_clock().now() here
+        # is still wall-clock epoch time, so a direct subtraction would mix
+        # two incompatible clock domains -- AgeCalibrator (clock_utils.py,
+        # ADR-25, ported from mpc_node.py's ADR-24 delay compensation)
+        # corrects for that via a running-minimum offset calibration
+        # instead. The Mac->VM hop itself is already measured separately,
+        # clock-skew-corrected (ADR-4's round-trip-sum method), and
+        # published on /carsim/latency_ms -- add that to this number for
+        # the full Mac-render-to-lane_state age.
         now_ns = self.get_clock().now().nanoseconds
-        stamp_ns = RclpyTime.from_msg(msg.header.stamp).nanoseconds
-        self._age_samples.append((now_ns - stamp_ns) * 1e-9)
+        self._age_samples.append(self._age_calibrator.age_s(now_ns, msg.header.stamp))
 
         self._t_pre_samples.append(t_pre)
         self._t_fwd_samples.append(t_fwd)
@@ -220,12 +226,15 @@ class PerceptionNode(Node):
         lines.append(row('age at publish (header.stamp -> publish)', age))
         lines.append('')
         lines.append(
-            'age at publish is single-clock (VM ROS clock on both ends -- '
-            'bridge_node stamps images at ITS OWN receipt time, not the '
-            'Mac render time) and covers graph-internal latency only: it '
-            'does NOT include the Mac->VM ZeroMQ hop. Add /carsim/latency_ms '
-            '(bridge_node.py report(), already clock-skew-corrected per '
-            'ADR-4) for the full Mac-render-to-lane_state age.')
+            'age at publish is clock-offset-calibrated (AgeCalibrator, '
+            'clock_utils.py, ADR-25) to correct for header.stamp being '
+            'sim-clock-relative (ADR-13, bridge_node stamps images with '
+            'sim time, not its own receipt wall-clock time) while this '
+            'node\'s own clock is wall-clock epoch time. Covers '
+            'graph-internal latency only: it does NOT include the '
+            'Mac->VM ZeroMQ hop. Add /carsim/latency_ms (bridge_node.py '
+            'report(), already clock-skew-corrected per ADR-4) for the '
+            'full Mac-render-to-lane_state age.')
 
         report_text = '\n'.join(lines)
         for line in lines:
