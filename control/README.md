@@ -95,8 +95,49 @@ torque (no `forcerange`), which inflates the settling time this figure
 comes from, not just the peak rate. Re-measure against a torque-limited
 model or real hardware before treating it as safe unmargined (ADR-20).
 
+**Terminal/stage cost's `delta` target — fixed, completing ADR-19, ADR-21.**
+ADR-19's cost unconditionally targeted `delta=0`, correct only while
+curvature was always 0 (ADR-15's premise, superseded by ADR-18). Fixed to
+target the curved-reference equilibrium `atan(L*kappa)` at every node
+(terminal first, then every stage node once a closed-loop check showed
+the other N-1 nodes were still fighting the terminal one) — validated
+against all 8 `sanity_check.py` cases and a standalone C++
+cross-validation. A closed-loop check found this fix does NOT eliminate
+all steady-state tracking bias on sustained curvature; see the next item.
+
+**Cost weights tuned; `DELTA_DOT_MAX` margin question resolved — both
+ADR-22.** `q_y`/`q_psi` (previously never tuned past their physically-
+normalized baseline) scaled isotropically by `S=2` after a closed-loop
+sweep found they're coupled through the single steering DOF, not
+independent knobs — cuts transition overshoot ~20% at both curvature
+levels with no saturation risk in ordinary driving. `r_delta_dot` kept at
+its baseline value; loosening it was rejected after the combination with
+`S=2` hit exactly 100% of `DELTA_DOT_MAX` on the worst-case combined-
+disturbance scenario. `DELTA_DOT_MAX` itself stays at the raw measured
+`5.2 rad/s`, not margined down to a considered `3.1 rad/s` — that margin
+addresses the *measurement's* idealization (ADR-20), a separate concern
+from how hard any scenario drives it; occasional saturation on the
+worst-case scenario is accepted as safe degradation (bounded command,
+solver status stays 0), not engineered away here. `DELTA_DOT_MAX=5.2`
+remains explicitly a sim-only ceiling pending hardware re-characterization
+in M4.
+
+**A known, bounded formulation limit — found during tuning, not fixed,
+ADR-22.** The closed-loop steady-state tracking bias on sustained
+curvature (a few cm / hundredths of a rad) persists even with the
+above target fix, because `ocp.py`'s quadratic reference `y(x)=c0+c1x+c2x^2`
+is a truncation of the true circular arc — verified directly (the
+"correct" equilibrium isn't actually a fixed point of the OCP's own
+optimal control law) and confirmed to grow, not shrink, with a longer
+preview horizon. Bounded and out of scope for M3; would need a higher-
+order or exact-geometry reference to remove, a materially bigger
+formulation change than a target or weight adjustment.
+
 ## Open questions
 
 None currently flagged as formulation questions. One pending
 *measurement*, not a decision: the acados RTI preparation/feedback split
-needs its own bench measurement before it's decided (ADR-19).
+needs its own bench measurement before it's decided (ADR-19). Full
+closed-loop stability testing (a sustained run, beyond the 3-lap
+diagnostic runs ADR-22's tuning used) and ROS2 integration (`mpc_node`)
+are the explicit next steps, separately scoped.

@@ -3,18 +3,29 @@ AcadosOcp setup for the lateral MPC (ADR-19): body-frame path tracking
 against the /lane_state contract's quadratic reference (docs/lane-state-
 contract.md section 1), against control/mpc/model.py's kinematic bicycle.
 
-Cost: NONLINEAR_LS, stage residual y = [e_lat, e_psi, delta, ddelta] in
-RAW physical units (m, rad, rad, rad/s) -- weight normalization (ADR-19)
-is applied via W = diag(1/envelope^2) per term (control/mpc/params.py),
-not by pre-scaling the residual itself; the two are mathematically
-equivalent for a quadratic cost ((r/s)^2 == r^2 * (1/s^2)) and this way
-the residual expression stays simple to read. Terminal cost uses the same
-weights (Q=diag(W_E_LAT,W_E_PSI,W_DELTA), R=[[W_U]]) fed into a discrete
-algebraic Riccati equation (scipy.linalg.solve_discrete_are) on the
-linearized error dynamics, evaluated once at a nominal speed
-(params.V_NOMINAL_FOR_DARE) -- acados does not support a speed-varying
-terminal cost without a much more involved parametric-Riccati setup, out
-of scope here.
+Cost: NONLINEAR_LS, stage residual y = [e_lat, e_psi, delta - atan(L*kappa),
+ddelta] in RAW physical units (m, rad, rad, rad/s), kappa=2*c2 -- delta's
+target is the curved-reference equilibrium at EVERY stage, not 0
+unconditionally (delta=0 was only correct when curvature was always 0,
+ADR-19's original premise; fixed first at the terminal node only, then
+here at every stage for internal consistency -- this did NOT turn out to
+fix the closed-loop plateau bias it was suspected to cause; see
+build_ocp's own stage-cost comment and docs/decisions.md for the actual
+root cause found). Weight normalization (ADR-19) is applied via
+W = diag(1/envelope^2) per term
+(control/mpc/params.py), not by pre-scaling the residual itself; the two
+are mathematically equivalent for a quadratic cost ((r/s)^2 == r^2 *
+(1/s^2)) and this way the residual expression stays simple to read.
+Terminal cost residual is [e_lat, e_psi, delta - atan(L*kappa)], the same
+delta_eq as the stage cost (kappa is the same per-node parameter at every
+node, terminal included). Uses the same weights (Q=diag(W_E_LAT,W_E_PSI,
+W_DELTA), R=[[W_U]]) fed into a discrete algebraic Riccati equation
+(scipy.linalg.solve_discrete_are) on the linearized error dynamics,
+evaluated once at a nominal speed (params.V_NOMINAL_FOR_DARE) and kept
+kappa-agnostic (checked: <=0.62% max entrywise effect at this track's
+tightest curvature, see _terminal_dare_matrix's own docstring) -- acados
+does not support a speed- or curvature-varying terminal cost weight
+without a much more involved parametric-Riccati setup, out of scope here.
 
 Constraints: delta hard-bounded (params.DELTA_MAX, measured -- car.xml's
 own steering joint range). ddelta hard-bounded (params.DELTA_DOT_MAX,
@@ -84,6 +95,22 @@ def _terminal_dare_matrix() -> np.ndarray:
     discretized with a first-order (Euler) hold at Ts -- an approximation
     specific to this linearization, not the ERK integration the OCP's
     actual stage dynamics use.
+
+    Linearized about delta=0 (kappa=0) regardless of the actual reference
+    curvature, even though the terminal cost's target delta is now
+    atan(L*kappa) rather than 0 (terminal-cost fix completing ADR-19,
+    docs/decisions.md). This is a deliberate, checked approximation, not an
+    oversight: re-linearizing tan(delta) about the true equilibrium
+    delta_eq=atan(L*kappa) instead of 0 changes the e_psi/delta coupling
+    term from v/L to (v/L)*(1+(L*kappa)^2) (sec^2(delta_eq)); at this
+    track's tightest curvature (kappa_max=1/R_min=0.333 1/m,
+    L*kappa_max=0.0867) that changes the resulting P by 0.26% (Frobenius
+    norm) / 0.62% (max entry) -- smaller than the Euler-vs-ERK4 and
+    single-nominal-speed approximations this same computation already
+    makes, and acados' W_e must be a fixed numeric matrix in any case (a
+    kappa-varying P needs the same parametric-Riccati machinery already
+    ruled out of scope above for a speed-varying one). Kept kappa-agnostic
+    on that basis, not left unexamined.
     """
     v = V_NOMINAL_FOR_DARE
     A_c = np.array([
@@ -120,18 +147,64 @@ def build_ocp(c0: float = 0.0, c1: float = 0.0, c2: float = 0.0, v: float = 1.0)
     ocp.solver_options.tf = N_HORIZON * TS
 
     # --- cost: NONLINEAR_LS, stage ------------------------------------
+    # delta's stage target is NOT unconditionally 0, same reasoning as the
+    # terminal residual below: the true equilibrium on a curved reference
+    # (kappa = 2*c2) is delta_eq = atan(L*kappa), and this applies at every
+    # stage, not just the terminal one -- kappa is already a per-node
+    # parameter (model.p, identical at every shooting node,
+    # solve_fixed_reference's own docstring), so this is arguably the more
+    # natural home for the fix than the terminal-only one below: it doesn't
+    # need anything not already available at every node. Applying it only
+    # at the terminal node (as the first fix here did) left the other N-1
+    # stage nodes still pulling delta toward 0 -- a genuine internal
+    # inconsistency (every node but the last disagreeing with what the
+    # terminal node treats as the target), worth fixing on that basis
+    # alone.
+    #
+    # This does NOT, on its own, fix the closed-loop plateau bias it was
+    # first suspected to cause: a closed-loop check (control/mpc/
+    # closed_loop_sim.py) before vs. after this exact change showed the
+    # steady-state e_psi/e_lat bias on sustained-curvature segments
+    # essentially unchanged (R=3m plateau: 0.0461 rad -> 0.0461 rad; R=5m:
+    # 0.0254 -> 0.0254). Root cause found by checking whether
+    # [e_lat=0, e_psi=0, delta=delta_eq] is actually a fixed point of the
+    # OCP's own optimal control law: it is not -- the solver commands a
+    # nonzero ddelta even started exactly there, because cost_y_expr's
+    # reference y(x) = c0 + c1 x + c2 x^2 is a quadratic TRUNCATION of the
+    # true circular arc (y = R - sqrt(R^2 - x^2)), so a vehicle exactly
+    # tracing the true track (matching delta_eq) reads as having growing
+    # e_lat against the OCP's own (undershooting) reference across the
+    # horizon -- a geometric reference-model mismatch, same quartic-
+    # truncation mechanism ADR-18 found in a different context
+    # (windowed_lane_state's Cartesian fit), not a target-value bug. Kept
+    # in because it's still the internally-consistent formulation, not
+    # because it resolves the plateau bias -- that's a separate, deeper
+    # issue, out of scope for this fix (see docs/decisions.md).
+    kappa_ref = 2 * model.p[2]
+    delta_eq = ca.atan(L * kappa_ref)
+
     e_lat, e_psi = _path_tracking_residual(model.x, model.p)
     delta = model.x[3]
     ddelta = model.u[0]
 
     ocp.cost.cost_type = "NONLINEAR_LS"
-    ocp.model.cost_y_expr = ca.vertcat(e_lat, e_psi, delta, ddelta)
+    ocp.model.cost_y_expr = ca.vertcat(e_lat, e_psi, delta - delta_eq, ddelta)
     ocp.cost.yref = np.zeros(4)
     ocp.cost.W = np.diag([W_E_LAT, W_E_PSI, W_DELTA, W_U])
 
     # --- cost: NONLINEAR_LS, terminal (DARE) --------------------------
+    # Same delta_eq as the stage cost above (kappa is the same per-node
+    # parameter at every node, terminal included) -- folded into the
+    # residual itself (cost_y_expr_e), not into yref_e: acados' NONLINEAR_LS
+    # cost only supports a constant numeric yref/yref_e, not a parameter-
+    # dependent one -- cost_y_expr_e is the symbolic side that CAN depend on
+    # model.p (c0,c1,c2,v), the same pattern e_lat/e_psi already use for
+    # their own (X-dependent) reference. yref_e stays all-zero; on a
+    # straight reference (c2=0, kappa=0) this residual reduces to
+    # delta - atan(0) = delta - 0, so straight-case behavior is
+    # unchanged (verified in sanity_check.py).
     ocp.cost.cost_type_e = "NONLINEAR_LS"
-    ocp.model.cost_y_expr_e = ca.vertcat(e_lat, e_psi, delta)
+    ocp.model.cost_y_expr_e = ca.vertcat(e_lat, e_psi, delta - delta_eq)
     ocp.cost.yref_e = np.zeros(3)
     ocp.cost.W_e = _terminal_dare_matrix()
 
