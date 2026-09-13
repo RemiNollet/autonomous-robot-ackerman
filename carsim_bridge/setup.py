@@ -26,8 +26,8 @@ setup(
     maintainer='Remi Nollet',
     maintainer_email='remi.nollet@live.fr',
     description=(
-        'ZeroMQ bridge to the macOS MuJoCo sim, dummy controller, and the '
-        'lane-perception node.'
+        'ZeroMQ bridge to the macOS MuJoCo sim, dummy controller, the '
+        'lane-perception node, and the lateral MPC node.'
     ),
     license='MIT',
     entry_points={
@@ -35,6 +35,7 @@ setup(
             'bridge_node = carsim_bridge.bridge_node:main',
             'dummy_controller_node = carsim_bridge.dummy_controller_node:main',
             'perception_node = carsim_bridge.perception_node:main',
+            'mpc_node = carsim_bridge.mpc_node:main',
         ],
     },
 )

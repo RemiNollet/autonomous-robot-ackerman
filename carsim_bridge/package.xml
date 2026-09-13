@@ -5,10 +5,11 @@
   <version>0.1.0</version>
   <description>
     ZeroMQ bridge between the macOS MuJoCo sim and the ROS2 graph, plus the
-    dummy controller and the lane-perception node. The only packages in
-    this graph that know the simulator or the perception model exist --
-    everything downstream sees only /carsim/* topics and /lane_state
-    (docs/decisions.md ADR-1, ADR-2; docs/lane-state-contract.md).
+    dummy controller, the lane-perception node, and the lateral MPC node.
+    The only packages in this graph that know the simulator, the
+    perception model, or the OCP formulation exist -- everything else
+    sees only /carsim/* topics and /lane_state (docs/decisions.md ADR-1,
+    ADR-2; docs/lane-state-contract.md).
   </description>
   <maintainer email="remi.nollet@live.fr">Remi Nollet</maintainer>
   <license>MIT</license>
@@ -24,7 +25,8 @@
   <exec_depend>python3-zmq</exec_depend>
 
   <!--
-    perception_node.py also needs torch and pillow (CPU-only). Neither has
+    perception_node.py also needs torch and pillow (CPU-only); mpc_node.py
+    needs acados_template and casadi (docs/decisions.md ADR-19). None has
     a resolvable rosdep key, so they're deliberately not declared here:
     a package.xml depend rosdep can't resolve breaks rosdep's
     from-paths dependency installation step. They're pip-installed into

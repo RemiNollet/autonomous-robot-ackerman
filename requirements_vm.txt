@@ -23,3 +23,22 @@ numpy
 # the major version aligned if this ever needs bumping.
 torch==2.13.0
 pillow
+
+# control/mpc/* (M3, ADR-19 onward) and carsim_bridge/mpc_node.py: the
+# acados/CasADi OCP solver, plus mujoco for control/mpc/closed_loop_sim.py's
+# standalone diagnostic (no perception/ROS2 in that loop, but it needs
+# physics -- mujoco normally only runs on the Mac side of the ZMQ bridge
+# split, ADR-1/ADR-2, this is the one place it also runs here). Not
+# previously tracked in this file even though installed during M3's OCP
+# work -- backfilled now while adding mpc_node's own dependency on the
+# same two.
+casadi==3.7.2
+mujoco==3.12.0
+# acados_template is NOT pip-installable from PyPI here -- it's installed
+# in editable mode (`pip install -e`) from a local clone of the acados
+# source repo (ACADOS_SOURCE_DIR=$HOME/acados, built by the user beforehand
+# per docs/decisions.md's M3 OCP task), so there's no version pin to give
+# here beyond noting the installed version was 0.5.1 at the time this was
+# written. Not resolvable via a plain `pip install -r` on a fresh VM --
+# see docs/decisions.md's M3 OCP formulation task for the acados
+# clone+build+install steps.

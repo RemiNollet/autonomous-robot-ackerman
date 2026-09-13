@@ -49,6 +49,19 @@ class PerceptionNode(Node):
         super().__init__('perception_node', **kwargs)
 
         self.declare_parameter('checkpoint_path', DEFAULT_CHECKPOINT)
+        # 0.5, unchanged by the ADR-23 curvature flip -- reviewed, not
+        # assumed still correct: confidence is architecturally independent
+        # of kappa (a separate output head supervised by its own BCE loss
+        # against the dataset's own valid/in-lane label, perception/model/
+        # loss.py -- kappa's loss weight going 0->1, ADR-18, changes
+        # nothing about confidence's gradient or calibration) and ADR-18's
+        # own regression check already measured confidence didn't move
+        # when kappa was retrained (accuracy 0.9948->1.0000, invalid
+        # recall 0.9444->1.0000). No evidence this flip miscalibrates it.
+        # Separately, though: 0.5 itself has never been justified by any
+        # ADR or measurement since it was first set (commit 63c5840,
+        # 2026-08-31) -- a pre-existing gap this flip didn't create and
+        # isn't the task to fix, left here as a flagged open question.
         self.declare_parameter('confidence_threshold', 0.5)
         self.declare_parameter('device', 'cpu')
         # Frame count, not a time window: at whatever rate is actually
@@ -93,7 +106,8 @@ class PerceptionNode(Node):
 
     def on_image(self, msg: Image):
         pil_img = ros_image_to_pil(msg.width, msg.height, msg.encoding, msg.data)
-        e_y, e_psi, confidence, t_pre, t_fwd = run_inference(self.model, pil_img, self.device)
+        e_y, e_psi, kappa, confidence, t_pre, t_fwd = run_inference(
+            self.model, pil_img, self.device)
 
         t2 = time.perf_counter()
         out = LaneState()
@@ -105,13 +119,16 @@ class PerceptionNode(Node):
         out.header.frame_id = msg.header.frame_id
         out.lateral_error = float(e_y)
         out.heading_error = float(e_psi)
-        # ADR-14: kappa's loss weight is 0 -- the head is kept in the
-        # architecture but was never trained, so its raw output is
-        # initialization drift that could vary unpredictably between
-        # checkpoints. Publishing it would look like a real curvature signal
-        # to a downstream MPC feedforward term; publish the one value that
-        # cannot be mistaken for one.
-        out.curvature = 0.0
+        # ADR-14 hardcoded this to 0.0 because kappa's loss weight was 0 --
+        # an untrained head's raw output is initialization drift, not a
+        # signal, and publishing it would look like real curvature to a
+        # downstream MPC feedforward term. ADR-18 retrained the checkpoint
+        # this node loads with a real, windowed-curvature-average-labeled
+        # kappa target (measured 81.3% improvement over the old published-
+        # zero baseline near curvature joins, no regression on the other
+        # three outputs) -- ADR-23 is the decision to actually publish it
+        # now that it is one.
+        out.curvature = float(kappa)
         out.confidence = float(confidence)
         out.valid = confidence >= self.confidence_threshold
 

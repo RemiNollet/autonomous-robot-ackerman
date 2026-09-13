@@ -9,6 +9,7 @@ live ROS2 graph) are in tests/test_perception_inference.py and DO run here
 should run on this machine cannot share a file with these.
 """
 
+import math
 import os
 import sys
 
@@ -95,7 +96,12 @@ def test_publishes_lane_state_with_propagated_stamp_from_synthetic_image(tmp_che
         assert out.header.stamp.sec == 123
         assert out.header.stamp.nanosec == 456789
         assert out.header.frame_id == 'base_link'
-        assert out.curvature == 0.0  # ADR-12: never the network's untrained output
+        # ADR-23: curvature is now the model's real (denormalized) output,
+        # not a hardcoded 0.0 -- this fixture is a randomly-initialized,
+        # untrained checkpoint (see tmp_checkpoint above), so there's no
+        # specific value to assert, only that it's a real finite float
+        # flowing through, same standard as the confidence check below.
+        assert math.isfinite(out.curvature)
         assert 0.0 <= out.confidence <= 1.0
         assert out.valid == (out.confidence >= node.confidence_threshold)
     finally:

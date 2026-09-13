@@ -172,8 +172,10 @@ e_y MAE is 5.5% of the lane half-width (0.4 m), p95 is 14.5%. e_psi MAE is
 99.5% accuracy, but that's on an imbalanced 90/10 valid/invalid split --
 per-class, valid recall is 100.0%, invalid recall 94.4%.
 
-**kappa is not reported as a result anywhere on this page.** Its loss
-weight is 0 -- see Limitations.
+**kappa is not reported as a result in this table.** These are the
+original v0 model's numbers, trained while kappa's loss weight was 0 --
+see Limitations for what changed (ADR-18's retrain, ADR-23's flip to
+actually publishing it).
 
 ### Per-curvature-bin (main model, test split)
 
@@ -301,12 +303,11 @@ Cartesian polynomial fit -- that was tried first and rejected, biased
 this measurably: near-join kappa MAE drops 81% versus the published
 zero baseline, with no regression on e_y/e_psi/confidence.
 `training_config.yaml`'s default is `kappa: 1.0` again as of ADR-18.
-Two separate decisions, deliberately not conflated: training now uses
-the real kappa signal (yes, as of ADR-18); `perception_node` still
-publishes `curvature=0.0` unconditionally (ADR-14's hardcoded output is
-unchanged) -- flipping that is a control-integration decision for a
-separate, later task once ADR-18 has been reviewed, not something this
-retrain result decides on its own.
+Two separate decisions, deliberately not conflated: training uses the
+real kappa signal (ADR-18); `perception_node` publishes it
+(ADR-23) -- the control-integration decision ADR-18 deferred, made once
+ADR-18 had been reviewed and validated on its own terms, not bundled
+into the retrain result itself.
 
 **`L_usable = 2.36 m` caps the M3 preview horizon.** Three independent
 limits were measured (`docs/camera-resolvability.md`): `L_resolvable`
@@ -357,12 +358,19 @@ VM-only, ADR-1) -- `perception_node.py` itself is a thin wrapper around it.
   stamped with VM-receipt wall-clock time instead of the simulator's own
   `t_sim`, fixed in ADR-13. The M1 timestamp item is only fully closed as
   of that fix, not by this node's propagation alone.
-- **`curvature` is always published as exactly `0.0`**, with a comment
-  pointing at ADR-14 -- never the network's raw kappa output, which is
-  untrained initialization drift that could vary unpredictably between
-  checkpoints.
+- **`curvature` is the model's real (denormalized) kappa output**
+  (ADR-23) -- published as exactly `0.0` from ADR-14 through ADR-22,
+  while the head was untrained (loss weight 0) and its raw output was
+  initialization drift, not a signal. ADR-18 retrained it with a real,
+  windowed-curvature-average-labeled target; ADR-23 is the decision to
+  actually publish it once that retrain had been validated on its own.
 - **`confidence`** is the model's sigmoid output; `valid` is
-  `confidence >= confidence_threshold` (parameter, default 0.5).
+  `confidence >= confidence_threshold` (parameter, default 0.5) --
+  reviewed against this flip (ADR-23) and left unchanged: confidence is
+  a separate output head with its own independent loss, unaffected by
+  kappa's loss weight. The 0.5 value itself predates any ADR and has
+  never been independently justified by measurement, unrelated to this
+  flip -- flagged, not fixed, here.
 
 **Deployment note:** the trained checkpoint
 (`perception/model/checkpoints/lane_cnn_width1.0_best.pt`) is produced on
@@ -432,8 +440,11 @@ the eager-mode dispatch overhead (M4).
   directions built into the track geometry itself)** -- addresses the
   kappa-label problem directly (no more 8 discrete transitions each
   invalidating a point-wise label within 2.36 m) and the discrete-5-value
-  target problem (ADR-11 finding 4) at the same time. Would let kappa's
-  loss weight be restored to nonzero for the first time since ADR-14.
+  target problem (ADR-11 finding 4) at the same time. Restoring kappa's
+  loss weight itself already happened on v0 (ADR-18's windowed-relabel
+  fix, ahead of this v1 item); what continuous curvature would add on top
+  is removing the discrete-transition structure the windowing has to work
+  around in the first place, not the loss weight itself.
 - **Domain variation (lighting, texture, worn markings)** -- addresses the
   confidence head being structurally easy (this Limitations section) and
   is the actual justification for this CNN's parameter budget over a
