@@ -17,6 +17,7 @@ project where ROS2 only runs in the VM (ADR-1).
 """
 import os
 import sys
+import threading
 import time
 
 import rclpy
@@ -100,6 +101,10 @@ class PerceptionNode(Node):
         self._interval_samples = []
         self._age_samples = []
         self._last_publish_perf = None
+        # Handle to the background thread spawned by _spawn_distribution_report()
+        # below -- exposed so tests can join() it deterministically instead of
+        # racing the file/log side effects it produces.
+        self._report_thread = None
         # Clock-offset calibration for the age-at-publish telemetry below
         # (ADR-25, ported from mpc_node.py's ADR-24 delay compensation --
         # see clock_utils.AgeCalibrator's docstring for why this is needed
@@ -175,7 +180,7 @@ class PerceptionNode(Node):
         self._t_pub_samples.append(t3 - t2)
 
         if len(self._t_pre_samples) >= self.stats_window_frames:
-            self._report_distribution()
+            self._spawn_distribution_report()
 
     def report(self):
         if self.n_msgs == 0:
@@ -190,16 +195,54 @@ class PerceptionNode(Node):
         self.n_msgs = 0
         self.t_preprocess_sum = self.t_forward_sum = self.t_publish_sum = 0.0
 
-    def _report_distribution(self):
+    def _spawn_distribution_report(self):
+        """Hand the just-filled sample window off to a background thread and
+        reset the buffers for the next window -- both O(1) reference
+        reassignments, so on_image() itself never waits on the report.
+
+        _report_distribution() below measured ~3 ms in isolation (stats
+        math + ~10 logger calls + one small file write), but full-chain
+        integration testing (M3) caught it, running inline here, directly
+        preceding a single 198 ms forward-pass stall under real graph load
+        -- CPU contention between this and the rest of the live ROS2 graph
+        that an isolated timing never reproduces. Rather than chase the
+        exact contention mechanism, the fix is structural: nothing this
+        method does needs on_image()'s thread, so it no longer runs there.
+
+        Swapping BEFORE spawning is what makes this safe without a lock --
+        the thread only ever sees the lists captured here, and on_image()
+        keeps appending to fresh ones; no mutable state is shared."""
+        samples = {
+            "pre": self._t_pre_samples,
+            "fwd": self._t_fwd_samples,
+            "pub": self._t_pub_samples,
+            "interval": self._interval_samples,
+            "age": self._age_samples,
+        }
+        self._t_pre_samples = []
+        self._t_fwd_samples = []
+        self._t_pub_samples = []
+        self._interval_samples = []
+        self._age_samples = []
+        self._report_thread = threading.Thread(
+            target=self._report_distribution, args=(samples,), daemon=True)
+        self._report_thread.start()
+
+    def _report_distribution(self, samples):
         """Full mean/p50/p95/max/std report over stats_window_frames frames
         -- the lightweight report() above only ever tracks a mean, which
         hides jitter. Logged always; also written to stats_output_path
-        (markdown, results.md-ready) when that parameter is non-empty."""
-        pre = distribution_stats(self._t_pre_samples)
-        fwd = distribution_stats(self._t_fwd_samples)
-        pub = distribution_stats(self._t_pub_samples)
-        interval = distribution_stats(self._interval_samples)
-        age = distribution_stats(self._age_samples)
+        (markdown, results.md-ready) when that parameter is non-empty.
+
+        Runs on the background thread spawned by _spawn_distribution_report()
+        above, operating only on the `samples` snapshot it was handed --
+        does not touch self._t_pre_samples etc, which on_image() may already
+        be appending to on the main thread by the time this runs."""
+        pre = distribution_stats(samples["pre"])
+        fwd = distribution_stats(samples["fwd"])
+        pub = distribution_stats(samples["pub"])
+        interval = distribution_stats(samples["interval"])
+        age = distribution_stats(samples["age"])
 
         def row(name, d):
             return (f'| {name} | {d["mean"]:.3f} | {d["p50"]:.3f} | '
@@ -244,12 +287,6 @@ class PerceptionNode(Node):
         if self.stats_output_path:
             with open(self.stats_output_path, 'w') as f:
                 f.write(report_text + '\n')
-
-        self._t_pre_samples.clear()
-        self._t_fwd_samples.clear()
-        self._t_pub_samples.clear()
-        self._interval_samples.clear()
-        self._age_samples.clear()
 
 
 def main(args=None):

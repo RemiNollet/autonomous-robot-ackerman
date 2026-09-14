@@ -142,6 +142,12 @@ def test_stats_report_fires_after_window_and_resets_buffers(tmp_checkpoint, tmp_
             msg.data = img_arr.tobytes()
             node.on_image(msg)
 
+        # _report_distribution() now runs on a background thread (spawned
+        # by _spawn_distribution_report()) so on_image() itself never
+        # blocks on it -- join here to make the file/log assertions below
+        # deterministic instead of racing that thread.
+        node._report_thread.join(timeout=5.0)
+
         assert stats_path.exists()
         content = stats_path.read_text()
         assert 'preprocess' in content

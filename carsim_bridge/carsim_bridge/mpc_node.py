@@ -52,15 +52,45 @@ Design decisions this file makes (ADR-24):
    broke -- for an unknown reason, on an unknown state. Decaying toward
    delta=0 (straight wheel) over a few cycles is a universally-safe
    default regardless of what triggered the failure, closer to how a
-   real ADAS safe-state degrades. This is deliberately minimal -- solver-
-   failure-only, not stale/invalid-lane_state handling (that's the next,
-   separately-scoped ticket per docs/lane-state-contract.md section 4).
+   real ADAS safe-state degrades.
+
+5. **Perception-health fallback (ADR-27), orthogonal to solve status.**
+   ADR-24 above was deliberately minimal -- solver-failure only. This is
+   the sibling mechanism ADR-24 flagged as a separate, later ticket:
+   `/lane_state` can be unhealthy (stale, or persistently low-confidence)
+   even when the solver itself would happily solve against it -- garbage
+   in, confidently-computed garbage out. Triggers on EITHER staleness
+   (age, via the same AgeCalibrator already computed for delay
+   compensation above -- not a second age measurement) exceeding
+   `STALE_AGE_THRESHOLD_S`, or `msg.valid == False` for
+   `N_INVALID_CONSECUTIVE_THRESHOLD` consecutive messages (not a single
+   one -- a lone low-confidence frame is expected sensor noise, not a
+   dropout; see those constants' own comments for the reasoning behind
+   each number). On trigger: the SAME delta-decay `_decay_delta()` the
+   solve-failure path uses (one shared function, not two "steer toward
+   straight" implementations that could quietly drift apart) PLUS
+   `v_target` forced to 0 for that cycle's longitudinal PI -- reusing the
+   existing PI/gains, not a second braking mechanism, since ADR-24 point
+   4 already owns v's only control path. No solve is attempted at all
+   when unhealthy: the input is already known untrustworthy, so there is
+   nothing a solve against it would add, only wasted compute and a
+   "successful" `x[1]` prediction that would be worse than just decaying.
+   **Recovery is deliberately NOT special-cased**: the next fresh+valid
+   message flows straight back into the normal solve path, using
+   whatever `self.delta_est` decayed to (and whatever `self.v_meas`
+   naturally settled to, via the same PI's own braking effect during the
+   unhealthy period) as `x0` -- a stopped, straight-wheeled vehicle is a
+   perfectly ordinary MPC initial condition, not a special state needing
+   a ramp back up. Stated explicitly here because it's a deliberate
+   design choice, not an accident of not having written a ramp.
 
 4. **Longitudinal command is a placeholder, explicitly not the thing
    under test.** ADR-19: this OCP does not control speed. Reuses
    closed_loop_sim.py's own simple PI-to-constant-v-target exactly
    (same gains, same non-authoritative status) rather than inventing a
-   second ad hoc version.
+   second ad hoc version. ADR-27 adds a second SETPOINT (0, on an
+   unhealthy trigger) but not a second control mechanism -- still the
+   same PI, same gains, same single implementation.
 """
 import math
 import os
@@ -96,8 +126,37 @@ V_INTEGRAL_CLAMP = 1.0
 
 # Solve-failure fallback (ADR-24, point 3 above): geometric decay toward
 # delta=0 over a handful of cycles, not an instant zero (a discontinuous
-# jump is itself a disturbance) and not an indefinite repeat.
+# jump is itself a disturbance) and not an indefinite repeat. Shared with
+# the perception-health fallback (ADR-27, point 5 above) via
+# _decay_delta() -- one implementation, two triggers.
 FALLBACK_DECAY = 0.7
+
+# Perception-health fallback (ADR-27). Both starting values, not
+# measured: the dedicated dropout-scenario test task tunes these against
+# actual observed behavior, not this task.
+#
+# STALE_AGE_THRESHOLD_S: /lane_state's nominal period is ~40ms (~25 Hz,
+# this node's own module docstring). 150ms is ~3.75x that -- generous
+# enough that ordinary jitter (a slow inference cycle, a scheduling
+# hiccup) doesn't false-trigger, tight enough that a real dropout is
+# caught within a handful of missed cycles, not dozens. Picked at the
+# LOWER end of the task's stated 150-200ms range: when a placeholder is
+# still pending real measurement, this project's own convention (e.g.
+# DELTA_DOT_MAX_PLACEHOLDER's original reasoning, ADR-19) is to fail
+# toward triggering sooner, not later, until it's actually tuned.
+STALE_AGE_THRESHOLD_S = 0.15
+
+# N_INVALID_CONSECUTIVE_THRESHOLD: a single low-confidence frame is
+# expected sensor noise (perception/README.md's own confidence numbers:
+# even the trained model's invalid-recall isn't 100% on every frame) --
+# reacting to one frame would false-trigger on normal operation, not
+# just real dropouts. 3 consecutive is enough of a run to distinguish
+# "the camera saw something ambiguous for an instant" from "perception
+# has actually lost the lane," while still being caught within ~120ms
+# (3 cycles at the ~40ms nominal period) of a real dropout starting --
+# comparable to, not dramatically slower than, the staleness threshold
+# above, so neither trigger dominates the other's response time.
+N_INVALID_CONSECUTIVE_THRESHOLD = 3
 
 # Sub-steps for the delay-compensation forward-propagation (ADR-24, point
 # 2) -- Euler, matching the OCP's own DARE linearization's discretization
@@ -154,6 +213,7 @@ class MpcNode(Node):
         self.delta_est = 0.0     # last-commanded delta, this node's own state estimate
         self.v_integral = 0.0
         self.n_fail_consecutive = 0
+        self.n_invalid_consecutive = 0  # ADR-27 perception-health trigger
 
         # Clock-offset calibration (ADR-24, point 2; ADR-25 extracted this
         # into a shared helper also used by perception_node.py) -- running
@@ -176,35 +236,68 @@ class MpcNode(Node):
         now_ns = self.get_clock().now().nanoseconds
         return self._age_calibrator.age_s(now_ns, stamp)
 
+    def _decay_delta(self) -> float:
+        """Shared by both fallback triggers (ADR-24 solve-failure, ADR-27
+        perception-health) -- same decay, same constant, one
+        implementation of "steer toward straight" rather than two that
+        could quietly drift apart."""
+        self.delta_est *= FALLBACK_DECAY
+        return self.delta_est
+
     def on_lane_state(self, msg: LaneState):
         t0 = time.perf_counter()
-
-        c0 = float(msg.lateral_error)
-        c1 = math.tan(float(msg.heading_error))
-        c2 = float(msg.curvature) / 2.0
-        v = max(self.v_meas, 0.05) if self.have_odom else self.v_target
-
         age_s = self._age_s(msg.header.stamp)
-        x0 = propagate_state(age_s, v, self.delta_est)
 
-        status = solve_fixed_reference(self.solver, c0, c1, c2, v, x0=x0)
-        solve_dt = time.perf_counter() - t0
-
-        if status == 0:
-            self.n_fail_consecutive = 0
-            delta_cmd = float(self.solver.get(1, "x")[3])
-            delta_cmd = max(-DELTA_MAX, min(DELTA_MAX, delta_cmd))
-            self.delta_est = delta_cmd
+        if msg.valid:
+            self.n_invalid_consecutive = 0
         else:
-            self.n_solve_failures += 1
-            self.n_fail_consecutive += 1
-            self.get_logger().warning(
-                f'acados solve status={status} (failure #{self.n_fail_consecutive} '
-                f'consecutive) -- decaying delta toward 0')
-            self.delta_est *= FALLBACK_DECAY
-            delta_cmd = self.delta_est
+            self.n_invalid_consecutive += 1
 
-        v_err = self.v_target - self.v_meas
+        stale = age_s > STALE_AGE_THRESHOLD_S
+        unhealthy = stale or self.n_invalid_consecutive >= N_INVALID_CONSECUTIVE_THRESHOLD
+
+        if unhealthy:
+            # No solve attempted at all: the input is already known
+            # untrustworthy (ADR-27) -- a "successful" solve against a
+            # stale or persistently-invalid reference would be confident
+            # garbage, not a better answer than decaying. v_target=0 for
+            # THIS cycle only (not sticky state -- recovery is the next
+            # message simply not being unhealthy, see ADR-27 point 5).
+            reason = 'stale' if stale else 'invalid'
+            self.get_logger().warning(
+                f'/lane_state unhealthy ({reason}, age={age_s*1000:.1f} ms, '
+                f'invalid_consecutive={self.n_invalid_consecutive}) -- '
+                f'safe state: v_target=0, decaying delta toward 0')
+            delta_cmd = self._decay_delta()
+            v_target_effective = 0.0
+        else:
+            c0 = float(msg.lateral_error)
+            c1 = math.tan(float(msg.heading_error))
+            c2 = float(msg.curvature) / 2.0
+            v = max(self.v_meas, 0.05) if self.have_odom else self.v_target
+
+            x0 = propagate_state(age_s, v, self.delta_est)
+            status = solve_fixed_reference(self.solver, c0, c1, c2, v, x0=x0)
+            solve_dt = time.perf_counter() - t0
+
+            if status == 0:
+                self.n_fail_consecutive = 0
+                delta_cmd = float(self.solver.get(1, "x")[3])
+                delta_cmd = max(-DELTA_MAX, min(DELTA_MAX, delta_cmd))
+                self.delta_est = delta_cmd
+            else:
+                self.n_solve_failures += 1
+                self.n_fail_consecutive += 1
+                self.get_logger().warning(
+                    f'acados solve status={status} (failure #{self.n_fail_consecutive} '
+                    f'consecutive) -- decaying delta toward 0')
+                delta_cmd = self._decay_delta()
+
+            v_target_effective = self.v_target
+            self.n_solves += 1
+            self._solve_time_samples.append(solve_dt)
+
+        v_err = v_target_effective - self.v_meas
         self.v_integral = float(np.clip(self.v_integral + v_err * TS,
                                          -V_INTEGRAL_CLAMP, V_INTEGRAL_CLAMP))
         accel_cmd = float(np.clip(KP_V * v_err + KI_V * self.v_integral, -1.0, 1.0))
@@ -213,9 +306,6 @@ class MpcNode(Node):
         cmd.angular.z = delta_cmd
         cmd.linear.x = accel_cmd
         self.pub_cmd.publish(cmd)
-
-        self.n_solves += 1
-        self._solve_time_samples.append(solve_dt)
 
     def report(self):
         if not self._solve_time_samples:

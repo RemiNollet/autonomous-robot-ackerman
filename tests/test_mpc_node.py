@@ -179,3 +179,145 @@ def test_age_calibration_handles_sim_clock_vs_wall_clock_offset():
         assert 0.0 <= age2 < 1.0
     finally:
         node.destroy_node()
+
+
+# --- ADR-27: perception-health fallback (stale / persistently-invalid) ----
+
+def test_fresh_valid_message_unaffected_by_health_gate():
+    """A normal, healthy message goes through the ordinary solve path --
+    the health gate must not fire (or change behavior) on the common
+    case. Explicit test for this, not just inferred from the other tests
+    above passing."""
+    node = mn.MpcNode()
+    try:
+        published = []
+        node.pub_cmd.publish = published.append
+
+        msg = _make_lane_state(lateral_error=0.05, heading_error=0.0, curvature=0.0)
+        node.on_lane_state(msg)
+
+        assert node.n_invalid_consecutive == 0
+        assert node.n_solves == 1  # a real solve happened, not a skip
+        assert len(published) == 1
+    finally:
+        node.destroy_node()
+
+
+def test_stale_message_triggers_safe_state():
+    """First message calibrates the age baseline (age=0 by construction,
+    AgeCalibrator's own documented cold-start property); a SECOND message
+    stamped a full second EARLIER than the first reads as ~1s old under
+    that calibration -- comfortably over STALE_AGE_THRESHOLD_S (0.15s),
+    without needing to actually wait in the test. Odometry set to a
+    nonzero speed first so a v_target=0 safe state is visibly distinct
+    from the default v_target=1.0 behavior (braking, not accelerating)."""
+    node = mn.MpcNode()
+    try:
+        published = []
+        node.pub_cmd.publish = published.append
+
+        from nav_msgs.msg import Odometry
+        odom = Odometry()
+        odom.twist.twist.linear.x = 1.0
+        node.on_odom(odom)
+
+        msg1 = _make_lane_state(sec=10)  # calibrates baseline, age=0
+        node.on_lane_state(msg1)
+        n_solves_after_first = node.n_solves
+
+        node.delta_est = 0.3  # pretend the healthy solve above left this
+        msg2 = _make_lane_state(lateral_error=0.05, sec=9)  # 1s "earlier"
+        node.on_lane_state(msg2)
+
+        assert node.n_solves == n_solves_after_first  # NO solve attempted
+        cmd = published[-1]
+        assert cmd.angular.z == pytest.approx(0.3 * mn.FALLBACK_DECAY)
+        # v_target=0 while v_meas=1.0 -> braking (negative), not the
+        # default v_target=1.0's near-zero-error accel.
+        assert cmd.linear.x < 0.0
+    finally:
+        node.destroy_node()
+
+
+def test_single_invalid_message_does_not_trigger():
+    """One low-confidence frame is expected sensor noise (ADR-27), below
+    N_INVALID_CONSECUTIVE_THRESHOLD -- must NOT trigger the safe state,
+    confirming the counter (not a bare boolean) is what gates this."""
+    node = mn.MpcNode()
+    try:
+        published = []
+        node.pub_cmd.publish = published.append
+
+        msg = _make_lane_state(lateral_error=0.05, valid=False, confidence=0.1)
+        node.on_lane_state(msg)
+
+        assert node.n_invalid_consecutive == 1
+        assert node.n_solves == 1  # still a real solve, gate didn't fire
+    finally:
+        node.destroy_node()
+
+
+def test_n_consecutive_invalid_triggers():
+    """N_INVALID_CONSECUTIVE_THRESHOLD (3) consecutive invalid messages
+    -- the run, not a single frame -- trips the safe state. The first
+    N-1 calls solve normally (the count hasn't REACHED the threshold
+    yet, same as test_single_invalid_message_does_not_trigger's own
+    point extended) -- only the Nth call, where the count reaches the
+    threshold, skips the solve and decays. delta_est isn't pinned to a
+    hand-picked value here (unlike the solve-failure test): the first
+    N-1 calls DO solve for real and update it, so what's checked is the
+    decay RELATIONSHIP (post-trigger == pre-trigger * FALLBACK_DECAY),
+    not a hardcoded number."""
+    node = mn.MpcNode()
+    try:
+        published = []
+        node.pub_cmd.publish = published.append
+
+        msg = _make_lane_state(lateral_error=0.05, valid=False, confidence=0.1)
+        for _ in range(mn.N_INVALID_CONSECUTIVE_THRESHOLD - 1):
+            node.on_lane_state(msg)  # count below threshold -- solves normally each time
+
+        assert node.n_solves == mn.N_INVALID_CONSECUTIVE_THRESHOLD - 1
+        delta_before_trigger = node.delta_est
+
+        node.on_lane_state(msg)  # count reaches threshold -- triggers
+
+        assert node.n_invalid_consecutive == mn.N_INVALID_CONSECUTIVE_THRESHOLD
+        assert node.n_solves == mn.N_INVALID_CONSECUTIVE_THRESHOLD - 1  # unchanged: skipped
+        cmd = published[-1]
+        assert cmd.angular.z == pytest.approx(delta_before_trigger * mn.FALLBACK_DECAY)
+        assert abs(cmd.angular.z) < abs(delta_before_trigger)  # decayed, not repeated
+    finally:
+        node.destroy_node()
+
+
+def test_recovery_resumes_normal_immediately_no_ramp():
+    """A fresh+valid message right after a triggered safe state goes
+    straight back to a normal solve -- no special-cased ramp-up state,
+    confirmed by a real solve happening on the very next message (not
+    "eventually" or after some recovery window)."""
+    node = mn.MpcNode()
+    try:
+        published = []
+        node.pub_cmd.publish = published.append
+
+        invalid_msg = _make_lane_state(lateral_error=0.05, valid=False, confidence=0.1)
+        for _ in range(mn.N_INVALID_CONSECUTIVE_THRESHOLD):
+            node.on_lane_state(invalid_msg)
+        # N-1 of these solved normally (count below threshold each time),
+        # the last one tripped the trigger and skipped -- see
+        # test_n_consecutive_invalid_triggers for the detailed breakdown.
+        n_solves_at_trigger = node.n_solves
+        assert n_solves_at_trigger == mn.N_INVALID_CONSECUTIVE_THRESHOLD - 1
+
+        fresh_msg = _make_lane_state(lateral_error=0.05, heading_error=0.0,
+                                      curvature=0.0, valid=True, confidence=1.0)
+        node.on_lane_state(fresh_msg)
+
+        assert node.n_invalid_consecutive == 0
+        # A real solve, immediately, not deferred or ramped.
+        assert node.n_solves == n_solves_at_trigger + 1
+        cmd = published[-1]
+        assert math.isfinite(cmd.angular.z)
+    finally:
+        node.destroy_node()
