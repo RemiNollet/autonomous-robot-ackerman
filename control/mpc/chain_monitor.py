@@ -33,6 +33,13 @@ bridge_node/perception_node/mpc_node on the VM):
     source ~/ros2_ws/install/setup.bash
     source ~/venvs/ackerman_ros2/bin/activate
     python3 control/mpc/chain_monitor.py --laps 3 --out-dir /tmp --tag chain_run
+
+Also writes a `{tag}_checkpoint_log.npz` snapshot every checkpoint_interval_s
+(default 120s), overwritten each time -- added for the M3 sustained-
+stability run (many minutes long), so a trend (or a reason to stop early)
+can be read from outside without waiting for the run's own final save.
+Purely additive: doesn't touch self.log, so the final `_save()` behavior
+below (on reaching --laps) is unchanged.
 """
 import argparse
 import math
@@ -62,7 +69,7 @@ def yaw_from_quat(q):
 
 class ChainMonitor(Node):
 
-    def __init__(self, laps, out_dir, tag):
+    def __init__(self, laps, out_dir, tag, checkpoint_interval_s=120.0):
         super().__init__('chain_monitor')
         self.laps_target = laps
         self.out_dir = out_dir
@@ -71,6 +78,8 @@ class ChainMonitor(Node):
         self.create_subscription(Odometry, 'carsim/odom', self.on_odom,
                                   QoSPresetProfiles.SENSOR_DATA.value)
         self.create_subscription(LaneState, 'lane_state', self.on_lane_state, 10)
+        if checkpoint_interval_s > 0:
+            self.create_timer(checkpoint_interval_s, self._checkpoint)
 
         self.have_odom = False
         self.x = self.y = self.yaw = self.v = 0.0
@@ -155,16 +164,34 @@ class ChainMonitor(Node):
             f'DONE: {self.n_lane_state_msgs} msgs, {laps_done:.2f} laps, '
             f'saved to {out_path}')
 
+    def _checkpoint(self):
+        """Periodic snapshot for a run long enough that waiting for _save()
+        isn't practical -- builds arrays from copies of the current lists
+        rather than converting self.log in place, so on_lane_state's own
+        appends (and the eventual real _save()) are unaffected by this
+        running concurrently on the executor."""
+        if self.done or self.n_lane_state_msgs == 0:
+            return
+        snapshot = {k: np.array(v) for k, v in self.log.items()}
+        out_path = os.path.join(self.out_dir, f'{self.tag}_checkpoint_log.npz')
+        np.savez(out_path, **snapshot)
+        laps_done = self.total_unwrapped_s / REFERENCE_TRACK.total_length
+        self.get_logger().info(
+            f'checkpoint: {self.n_lane_state_msgs} msgs, {laps_done:.2f} laps, '
+            f'saved to {out_path}')
+
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--laps', type=float, default=3.0)
     ap.add_argument('--out-dir', default='/tmp')
     ap.add_argument('--tag', default='chain_run')
+    ap.add_argument('--checkpoint-interval', type=float, default=120.0,
+                     help='seconds between checkpoint saves, 0 to disable')
     args = ap.parse_args()
 
     rclpy.init()
-    node = ChainMonitor(args.laps, args.out_dir, args.tag)
+    node = ChainMonitor(args.laps, args.out_dir, args.tag, args.checkpoint_interval)
     try:
         while rclpy.ok() and not node.done:
             rclpy.spin_once(node, timeout_sec=1.0)
