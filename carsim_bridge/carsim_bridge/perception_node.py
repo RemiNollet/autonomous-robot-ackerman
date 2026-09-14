@@ -17,13 +17,13 @@ project where ROS2 only runs in the VM (ADR-1).
 """
 import os
 import sys
+import threading
 import time
 
 import rclpy
 import torch
 from rclpy.node import Node
 from rclpy.qos import QoSPresetProfiles
-from rclpy.time import Time as RclpyTime
 from sensor_msgs.msg import Image
 
 # One level up, not two: this only needs to resolve its own sibling
@@ -34,6 +34,7 @@ from sensor_msgs.msg import Image
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from carsim_msgs.msg import LaneState  # noqa: E402
+from carsim_bridge.clock_utils import AgeCalibrator  # noqa: E402
 from carsim_bridge.perception_inference import (  # noqa: E402
     DEFAULT_CHECKPOINT, distribution_stats, load_model, ros_image_to_pil,
     run_inference,
@@ -49,6 +50,19 @@ class PerceptionNode(Node):
         super().__init__('perception_node', **kwargs)
 
         self.declare_parameter('checkpoint_path', DEFAULT_CHECKPOINT)
+        # 0.5, unchanged by the ADR-23 curvature flip -- reviewed, not
+        # assumed still correct: confidence is architecturally independent
+        # of kappa (a separate output head supervised by its own BCE loss
+        # against the dataset's own valid/in-lane label, perception/model/
+        # loss.py -- kappa's loss weight going 0->1, ADR-18, changes
+        # nothing about confidence's gradient or calibration) and ADR-18's
+        # own regression check already measured confidence didn't move
+        # when kappa was retrained (accuracy 0.9948->1.0000, invalid
+        # recall 0.9444->1.0000). No evidence this flip miscalibrates it.
+        # Separately, though: 0.5 itself has never been justified by any
+        # ADR or measurement since it was first set (commit 63c5840,
+        # 2026-08-31) -- a pre-existing gap this flip didn't create and
+        # isn't the task to fix, left here as a flagged open question.
         self.declare_parameter('confidence_threshold', 0.5)
         self.declare_parameter('device', 'cpu')
         # Frame count, not a time window: at whatever rate is actually
@@ -87,13 +101,23 @@ class PerceptionNode(Node):
         self._interval_samples = []
         self._age_samples = []
         self._last_publish_perf = None
+        # Handle to the background thread spawned by _spawn_distribution_report()
+        # below -- exposed so tests can join() it deterministically instead of
+        # racing the file/log side effects it produces.
+        self._report_thread = None
+        # Clock-offset calibration for the age-at-publish telemetry below
+        # (ADR-25, ported from mpc_node.py's ADR-24 delay compensation --
+        # see clock_utils.AgeCalibrator's docstring for why this is needed
+        # instead of a direct now() - header.stamp subtraction).
+        self._age_calibrator = AgeCalibrator()
 
         self.get_logger().info(
             f'perception_node actif  checkpoint={checkpoint_path}  device={self.device}')
 
     def on_image(self, msg: Image):
         pil_img = ros_image_to_pil(msg.width, msg.height, msg.encoding, msg.data)
-        e_y, e_psi, confidence, t_pre, t_fwd = run_inference(self.model, pil_img, self.device)
+        e_y, e_psi, kappa, confidence, t_pre, t_fwd = run_inference(
+            self.model, pil_img, self.device)
 
         t2 = time.perf_counter()
         out = LaneState()
@@ -105,13 +129,16 @@ class PerceptionNode(Node):
         out.header.frame_id = msg.header.frame_id
         out.lateral_error = float(e_y)
         out.heading_error = float(e_psi)
-        # ADR-14: kappa's loss weight is 0 -- the head is kept in the
-        # architecture but was never trained, so its raw output is
-        # initialization drift that could vary unpredictably between
-        # checkpoints. Publishing it would look like a real curvature signal
-        # to a downstream MPC feedforward term; publish the one value that
-        # cannot be mistaken for one.
-        out.curvature = 0.0
+        # ADR-14 hardcoded this to 0.0 because kappa's loss weight was 0 --
+        # an untrained head's raw output is initialization drift, not a
+        # signal, and publishing it would look like real curvature to a
+        # downstream MPC feedforward term. ADR-18 retrained the checkpoint
+        # this node loads with a real, windowed-curvature-average-labeled
+        # kappa target (measured 81.3% improvement over the old published-
+        # zero baseline near curvature joins, no regression on the other
+        # three outputs) -- ADR-23 is the decision to actually publish it
+        # now that it is one.
+        out.curvature = float(kappa)
         out.confidence = float(confidence)
         out.valid = confidence >= self.confidence_threshold
 
@@ -132,27 +159,28 @@ class PerceptionNode(Node):
         self._last_publish_perf = t3
 
         # End-to-end age at publication: this node's publish time minus
-        # msg.header.stamp, both read from the VM's own ROS clock. NOT a
-        # Mac/VM cross-clock measurement and does NOT span the ZeroMQ hop --
-        # bridge_node.py stamps every image with self.get_clock().now() at
-        # the moment IT receives the frame (carsim_bridge/bridge_node.py
-        # poll()), not with the Mac's render time. The Mac->VM hop itself is
-        # already measured, clock-skew-corrected (ADR-4's round-trip-sum
-        # method), and published separately on /carsim/latency_ms -- add
-        # that to this number for the full Mac-render-to-lane_state age.
-        # .nanoseconds (plain int), not Time.__sub__ -- get_clock().now() and
-        # Time.from_msg() don't default to the same rclpy clock_type, and
-        # subtracting two Time objects directly raises unless they match.
+        # msg.header.stamp. NOT a Mac/VM cross-clock measurement and does
+        # NOT span the ZeroMQ hop -- bridge_node.py stamps every image with
+        # sim-clock-relative time (ADR-13, sim_time_to_stamp), not its own
+        # receipt wall-clock time and not the Mac's render time. Since no
+        # node in this graph sets use_sim_time, self.get_clock().now() here
+        # is still wall-clock epoch time, so a direct subtraction would mix
+        # two incompatible clock domains -- AgeCalibrator (clock_utils.py,
+        # ADR-25, ported from mpc_node.py's ADR-24 delay compensation)
+        # corrects for that via a running-minimum offset calibration
+        # instead. The Mac->VM hop itself is already measured separately,
+        # clock-skew-corrected (ADR-4's round-trip-sum method), and
+        # published on /carsim/latency_ms -- add that to this number for
+        # the full Mac-render-to-lane_state age.
         now_ns = self.get_clock().now().nanoseconds
-        stamp_ns = RclpyTime.from_msg(msg.header.stamp).nanoseconds
-        self._age_samples.append((now_ns - stamp_ns) * 1e-9)
+        self._age_samples.append(self._age_calibrator.age_s(now_ns, msg.header.stamp))
 
         self._t_pre_samples.append(t_pre)
         self._t_fwd_samples.append(t_fwd)
         self._t_pub_samples.append(t3 - t2)
 
         if len(self._t_pre_samples) >= self.stats_window_frames:
-            self._report_distribution()
+            self._spawn_distribution_report()
 
     def report(self):
         if self.n_msgs == 0:
@@ -167,16 +195,54 @@ class PerceptionNode(Node):
         self.n_msgs = 0
         self.t_preprocess_sum = self.t_forward_sum = self.t_publish_sum = 0.0
 
-    def _report_distribution(self):
+    def _spawn_distribution_report(self):
+        """Hand the just-filled sample window off to a background thread and
+        reset the buffers for the next window -- both O(1) reference
+        reassignments, so on_image() itself never waits on the report.
+
+        _report_distribution() below measured ~3 ms in isolation (stats
+        math + ~10 logger calls + one small file write), but full-chain
+        integration testing (M3) caught it, running inline here, directly
+        preceding a single 198 ms forward-pass stall under real graph load
+        -- CPU contention between this and the rest of the live ROS2 graph
+        that an isolated timing never reproduces. Rather than chase the
+        exact contention mechanism, the fix is structural: nothing this
+        method does needs on_image()'s thread, so it no longer runs there.
+
+        Swapping BEFORE spawning is what makes this safe without a lock --
+        the thread only ever sees the lists captured here, and on_image()
+        keeps appending to fresh ones; no mutable state is shared."""
+        samples = {
+            "pre": self._t_pre_samples,
+            "fwd": self._t_fwd_samples,
+            "pub": self._t_pub_samples,
+            "interval": self._interval_samples,
+            "age": self._age_samples,
+        }
+        self._t_pre_samples = []
+        self._t_fwd_samples = []
+        self._t_pub_samples = []
+        self._interval_samples = []
+        self._age_samples = []
+        self._report_thread = threading.Thread(
+            target=self._report_distribution, args=(samples,), daemon=True)
+        self._report_thread.start()
+
+    def _report_distribution(self, samples):
         """Full mean/p50/p95/max/std report over stats_window_frames frames
         -- the lightweight report() above only ever tracks a mean, which
         hides jitter. Logged always; also written to stats_output_path
-        (markdown, results.md-ready) when that parameter is non-empty."""
-        pre = distribution_stats(self._t_pre_samples)
-        fwd = distribution_stats(self._t_fwd_samples)
-        pub = distribution_stats(self._t_pub_samples)
-        interval = distribution_stats(self._interval_samples)
-        age = distribution_stats(self._age_samples)
+        (markdown, results.md-ready) when that parameter is non-empty.
+
+        Runs on the background thread spawned by _spawn_distribution_report()
+        above, operating only on the `samples` snapshot it was handed --
+        does not touch self._t_pre_samples etc, which on_image() may already
+        be appending to on the main thread by the time this runs."""
+        pre = distribution_stats(samples["pre"])
+        fwd = distribution_stats(samples["fwd"])
+        pub = distribution_stats(samples["pub"])
+        interval = distribution_stats(samples["interval"])
+        age = distribution_stats(samples["age"])
 
         def row(name, d):
             return (f'| {name} | {d["mean"]:.3f} | {d["p50"]:.3f} | '
@@ -203,12 +269,15 @@ class PerceptionNode(Node):
         lines.append(row('age at publish (header.stamp -> publish)', age))
         lines.append('')
         lines.append(
-            'age at publish is single-clock (VM ROS clock on both ends -- '
-            'bridge_node stamps images at ITS OWN receipt time, not the '
-            'Mac render time) and covers graph-internal latency only: it '
-            'does NOT include the Mac->VM ZeroMQ hop. Add /carsim/latency_ms '
-            '(bridge_node.py report(), already clock-skew-corrected per '
-            'ADR-4) for the full Mac-render-to-lane_state age.')
+            'age at publish is clock-offset-calibrated (AgeCalibrator, '
+            'clock_utils.py, ADR-25) to correct for header.stamp being '
+            'sim-clock-relative (ADR-13, bridge_node stamps images with '
+            'sim time, not its own receipt wall-clock time) while this '
+            'node\'s own clock is wall-clock epoch time. Covers '
+            'graph-internal latency only: it does NOT include the '
+            'Mac->VM ZeroMQ hop. Add /carsim/latency_ms (bridge_node.py '
+            'report(), already clock-skew-corrected per ADR-4) for the '
+            'full Mac-render-to-lane_state age.')
 
         report_text = '\n'.join(lines)
         for line in lines:
@@ -218,12 +287,6 @@ class PerceptionNode(Node):
         if self.stats_output_path:
             with open(self.stats_output_path, 'w') as f:
                 f.write(report_text + '\n')
-
-        self._t_pre_samples.clear()
-        self._t_fwd_samples.clear()
-        self._t_pub_samples.clear()
-        self._interval_samples.clear()
-        self._age_samples.clear()
 
 
 def main(args=None):
