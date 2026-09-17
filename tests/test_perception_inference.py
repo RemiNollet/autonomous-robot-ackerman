@@ -124,17 +124,21 @@ def test_wire_protocol_roundtrip_matches_a_real_dataset_image():
 
 def test_run_inference_shapes_and_finiteness():
     """Doesn't need a trained checkpoint -- a freshly-initialized model is
-    enough to check run_inference's contract: three finite floats out,
-    confidence in [0, 1], and that it returns separate preprocess/forward
-    timings (both >= 0) rather than a single combined number."""
+    enough to check run_inference's contract: four finite floats out
+    (e_y, e_psi, kappa, confidence -- kappa returned since ADR-23, no
+    longer hidden behind a 0.0 placeholder now that ADR-18 gives it a
+    real trained target), confidence in [0, 1] (kappa has no such bound
+    on a randomly-initialized model, so it's checked for finiteness only,
+    not range), and that it returns separate preprocess/forward timings
+    (both >= 0) rather than a single combined number."""
     torch.manual_seed(0)
     model = LaneCNN(width_mult=1.0)
     model.eval()
     img = _make_test_image()
 
-    e_y, e_psi, confidence, t_pre, t_fwd = run_inference(model, img, torch.device("cpu"))
+    e_y, e_psi, kappa, confidence, t_pre, t_fwd = run_inference(model, img, torch.device("cpu"))
 
-    assert all(np.isfinite(v) for v in (e_y, e_psi, confidence))
+    assert all(np.isfinite(v) for v in (e_y, e_psi, kappa, confidence))
     assert 0.0 <= confidence <= 1.0
     assert t_pre >= 0.0 and t_fwd >= 0.0
 

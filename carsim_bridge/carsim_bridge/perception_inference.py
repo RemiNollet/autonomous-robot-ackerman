@@ -106,10 +106,18 @@ def run_inference(model: torch.nn.Module, pil_img: PILImage.Image, device: torch
     matters for the embedded budget; measured Mac-CPU numbers contradicted
     it (forward ~1.1 ms vs preprocess ~0.26 ms, perception/README.md
     Latency), so the two stages stay timed separately rather than folded
-    into one number. Returns (e_y, e_psi, confidence, t_preprocess_s,
-    t_forward_s) in physical units / [0,1] -- kappa is deliberately not
-    returned; the untrained head's output must never reach a caller
-    (docs/decisions.md ADR-12)."""
+    into one number. Returns (e_y, e_psi, kappa, confidence, t_preprocess_s,
+    t_forward_s) in physical units / [0,1].
+
+    kappa WAS deliberately withheld here (this function used to hardcode a
+    0.0 placeholder into denormalize_targets and drop the head's own
+    output) while its loss weight was 0 -- an untrained head's output is
+    initialization drift, not a signal (docs/decisions.md ADR-14). ADR-18
+    retrained the checkpoint this module loads with a real, weighted kappa
+    target (windowed-curvature-average labels), so the head's output is
+    now real and is returned like the other two regression outputs.
+    Whether the CALLER publishes it is perception_node.py's own decision
+    (docs/decisions.md ADR-23) -- this function just stops hiding it."""
     t0 = time.perf_counter()
     arr = preprocess(pil_img)  # (3, H, W) float32
     t1 = time.perf_counter()
@@ -119,8 +127,8 @@ def run_inference(model: torch.nn.Module, pil_img: PILImage.Image, device: torch
         pred, _ = model(x)
     t2 = time.perf_counter()
 
-    e_y_n, e_psi_n = pred[0, 0].item(), pred[0, 1].item()
-    e_y, e_psi, _ = denormalize_targets(e_y_n, e_psi_n, 0.0)
+    e_y_n, e_psi_n, kappa_n = pred[0, 0].item(), pred[0, 1].item(), pred[0, 2].item()
+    e_y, e_psi, kappa = denormalize_targets(e_y_n, e_psi_n, kappa_n)
     confidence = torch.sigmoid(pred[0, 3]).item()
 
-    return e_y, e_psi, confidence, (t1 - t0), (t2 - t1)
+    return e_y, e_psi, kappa, confidence, (t1 - t0), (t2 - t1)

@@ -1,0 +1,6 @@
+#!/bin/sh
+# See scripts/perception_node's own comment for the full explanation --
+# same fix, same reason (this node needs casadi/acados_template, which
+# only exist in the ackerman_ros2 venv, not system Python).
+VENV="${CARSIM_BRIDGE_VENV:-$HOME/venvs/ackerman_ros2}"
+exec "$VENV/bin/python3" -m carsim_bridge.mpc_node "$@"
