@@ -18,6 +18,14 @@ import zmq
 
 import protocol as P
 import mujoco.viewer as mj_viewer
+# Live display for --view-camera. PIL (already used by perception_inference.py
+# and the dataset tooling, checked before adding anything here) has no
+# in-place-update window API -- Image.show() shells out to an external
+# viewer per call, spawning a new one each frame at 25 Hz. matplotlib is
+# already a project dependency (requirements-sim.txt) and its imshow +
+# interactive-mode recipe is the standard way to show successive numpy
+# frames in one updating window without adding cv2 as a new dependency.
+import matplotlib.pyplot as plt
 
 WHEELBASE = 0.26   # empattement [m]
 TRACK = 0.21       # voie [m]
@@ -61,7 +69,31 @@ def main():
     ap.add_argument("--view", action="store_true",
                      help="open a live MuJoCo passive viewer window, for a "
                           "demo/recording -- not for any automated test path")
+    ap.add_argument("--view-camera", action="store_true",
+                     help="open a second, separate window showing the front "
+                          "camera frame at its natural capture rate -- works "
+                          "alongside --view or standalone. Demo/recording "
+                          "only, not for any automated test path")
     args = ap.parse_args()
+    if args.view_camera and args.no_camera:
+        ap.error("--view-camera needs the camera enabled (drop --no-camera)")
+    if args.view and args.view_camera:
+        # Not a matplotlib-backend choice -- tried the macosx default (a
+        # RuntimeError: "Cannot create a GUI FigureManager outside the main
+        # thread") and TkAgg (a silent crash, no traceback at all). Both
+        # fail because mjpython -- required by --view's
+        # mj_viewer.launch_passive on macOS -- reserves the real OS main
+        # thread exclusively for MuJoCo and runs the rest of this script on
+        # a worker thread; macOS's window-creation APIs are main-thread-only
+        # for every GUI toolkit, matplotlib's included, so this can't be
+        # fixed by swapping backends. Each flag works solidly on its own;
+        # only running both together under mjpython hits this OS-level
+        # wall. Failing fast here with an explanation beats a cryptic crash
+        # three layers into matplotlib.
+        ap.error("--view and --view-camera can't run together: mjpython "
+                 "(needed for --view on macOS) reserves the main thread for "
+                 "MuJoCo, which every native GUI toolkit -- matplotlib "
+                 "included -- needs for window creation. Run each alone.")
 
     model = mujoco.MjModel.from_xml_path(args.model)
     data = mujoco.MjData(model)
@@ -73,6 +105,22 @@ def main():
     viewer = None
     if args.view:
         viewer = mj_viewer.launch_passive(model, data)
+
+    cam_fig = cam_im = None
+    if args.view_camera:
+        # This is a separate, independent OS window -- not composited into
+        # the MuJoCo viewer above (different GUI backend: GLFW there,
+        # matplotlib's own here). Positioning side by side is manual, done
+        # by the user after both windows open -- not worth the complexity
+        # of programmatic placement across two unrelated GUI toolkits for a
+        # demo feature.
+        plt.ion()
+        cam_fig, cam_ax = plt.subplots(num="carsim front camera")
+        cam_im = cam_ax.imshow(np.zeros((args.height, args.width, 3), dtype=np.uint8))
+        cam_ax.axis("off")
+        cam_fig.tight_layout()
+        cam_fig.canvas.draw()
+        cam_fig.canvas.flush_events()
 
     ctx = zmq.Context()
     pub = ctx.socket(zmq.PUB)
@@ -158,6 +206,19 @@ def main():
                 renderer.update_scene(data, camera="cam_front")
                 img = renderer.render()
 
+                if cam_im is not None:
+                    # Same frame already captured above for the perception
+                    # pipeline, displayed locally -- no ROS/network round
+                    # trip (ADR-1's Mac/VM boundary untouched). Guard
+                    # against the user having closed the window: stop
+                    # updating rather than raising on a dead figure.
+                    if plt.fignum_exists(cam_fig.number):
+                        cam_im.set_data(img)
+                        cam_fig.canvas.draw_idle()
+                        cam_fig.canvas.flush_events()
+                    else:
+                        cam_im = None
+
             pub.send_multipart(P.encode_state(seq, data.time, pose, twist, img))
             seq += 1
 
@@ -181,6 +242,8 @@ def main():
     finally:
         if viewer is not None:
             viewer.close()
+        if cam_fig is not None:
+            plt.close(cam_fig)
         pub.close()
         sub.close()
         ctx.term()
