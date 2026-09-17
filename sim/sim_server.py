@@ -17,6 +17,7 @@ import numpy as np
 import zmq
 
 import protocol as P
+import mujoco.viewer as mj_viewer
 
 WHEELBASE = 0.26   # empattement [m]
 TRACK = 0.21       # voie [m]
@@ -57,6 +58,9 @@ def main():
     ap.add_argument("--height", type=int, default=240)
     ap.add_argument("--no-camera", action="store_true")
     ap.add_argument("--realtime", action="store_true", default=True)
+    ap.add_argument("--view", action="store_true",
+                     help="open a live MuJoCo passive viewer window, for a "
+                          "demo/recording -- not for any automated test path")
     args = ap.parse_args()
 
     model = mujoco.MjModel.from_xml_path(args.model)
@@ -65,6 +69,10 @@ def main():
     renderer = None
     if not args.no_camera:
         renderer = mujoco.Renderer(model, args.height, args.width)
+
+    viewer = None
+    if args.view:
+        viewer = mj_viewer.launch_passive(model, data)
 
     ctx = zmq.Context()
     pub = ctx.socket(zmq.PUB)
@@ -131,6 +139,11 @@ def main():
             for _ in range(n_sub):
                 mujoco.mj_step(model, data)
 
+            if viewer is not None:
+                viewer.sync()
+                if not viewer.is_running():
+                    break
+
             # --- capteurs ---
             pos = data.body("chassis").xpos
             quat = data.body("chassis").xquat
@@ -166,6 +179,8 @@ def main():
     except KeyboardInterrupt:
         print("\n[sim] arret")
     finally:
+        if viewer is not None:
+            viewer.close()
         pub.close()
         sub.close()
         ctx.term()
