@@ -31,7 +31,16 @@
   </visual>
 
   <worldbody>
-    <light pos="0 0 6" dir="0 0 -1" diffuse="0.9 0.9 0.9" specular="0.1 0.1 0.1"/>
+    <!-- Directional (sun-like), not the point light this replaced: a point
+         light at a fixed position falls off with distance, so it only lit
+         the area near the start -- the rest of a ~14m track was dark.
+         Directional lighting has no falloff, illuminating the whole scene
+         uniformly regardless of position, and is simpler than placing
+         point lights along the track's geometry. ambient raised from the
+         implicit default (0 0 0) since a single directional light leaves
+         anything it doesn't face-on pure black otherwise. -->
+    <light pos="0 0 6" dir="0 0 -1" mode="fixed" directional="true"
+           ambient="0.3 0.3 0.3" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2"/>
     <geom name="floor" type="plane" size="40 40 0.1" material="grid"/>
 
     <!-- Parametric closed-loop track, generated from

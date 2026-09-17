@@ -105,6 +105,26 @@ def main():
     viewer = None
     if args.view:
         viewer = mj_viewer.launch_passive(model, data)
+        # Chase camera, not the default free/static view -- bundled into
+        # --view rather than a separate --follow flag: --view only ever
+        # exists for a demo/recording (never an automated test path, same
+        # constraint as the flag itself), and there's no case where the
+        # static default beats being able to actually see the car drive.
+        # trackbodyid follows the chassis's POSITION only -- MuJoCo's
+        # mjCAMERA_TRACKING keeps azimuth/elevation/distance fixed in the
+        # WORLD frame, it doesn't turn the camera to stay behind the
+        # vehicle through corners (verified: rendering the same params at a
+        # 90deg-turned pose shows the car from the side, not from behind,
+        # though still clearly in frame). A real heading-following chase
+        # cam would need per-frame azimuth updates from the chassis yaw --
+        # not worth it for a demo. distance/elevation/azimuth chosen by
+        # rendering this exact camera at several track poses and looking at
+        # the output (see chase_*.png), not guessed.
+        viewer.cam.trackbodyid = model.body("chassis").id
+        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        viewer.cam.distance = 2.5
+        viewer.cam.elevation = -20
+        viewer.cam.azimuth = 90
 
     cam_fig = cam_im = None
     if args.view_camera:
