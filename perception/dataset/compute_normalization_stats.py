@@ -37,7 +37,8 @@ def main():
 
     for i, row in enumerate(rows):
         path = os.path.join(IMG_DIR, row["filename"])
-        arr = np.asarray(Image.open(path).convert("RGB"), dtype=np.float64) / 255.0
+        img = Image.open(path).convert("RGB")
+        arr = np.asarray(img, dtype=np.float64) / 255.0
         channel_sum += arr.sum(axis=(0, 1))
         channel_sumsq += (arr ** 2).sum(axis=(0, 1))
         n_pixels += arr.shape[0] * arr.shape[1]

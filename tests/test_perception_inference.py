@@ -16,23 +16,23 @@ import pytest
 from PIL import Image as PILImage
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-# Second entry: carsim_bridge is a nested ament_python package
-# (carsim_bridge/carsim_bridge/), so `import carsim_bridge.X` needs the
-# outer carsim_bridge/ directory on sys.path too, not just the repo root
-# that resolves `perception.*` above.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "carsim_bridge"))
+# carsim_bridge is a nested ament_python package, so importing
+# carsim_bridge.X also needs its outer directory on sys.path.
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "carsim_bridge"))
 
 torch = pytest.importorskip("torch")
 
-from carsim_bridge import protocol as P
-from carsim_bridge.perception_inference import (
+from carsim_bridge import protocol as P  # noqa: E402
+from carsim_bridge.perception_inference import (  # noqa: E402
     distribution_stats, load_model, ros_image_to_pil, run_inference,
 )
-from perception.model.lane_cnn import LaneCNN
-from perception.model.preprocess import preprocess
+from perception.model.lane_cnn import LaneCNN  # noqa: E402
+from perception.model.preprocess import preprocess  # noqa: E402
 
-SAMPLE_IMAGE = os.path.join(os.path.dirname(__file__), "..", "data", "dataset_v0",
-                             "images", "img_00000.png")
+SAMPLE_IMAGE = os.path.join(
+    os.path.dirname(__file__), "..", "data", "dataset_v0",
+    "images", "img_00000.png")
 
 
 def _make_test_image():
@@ -44,13 +44,15 @@ def _make_test_image():
 def test_ros_image_to_pil_roundtrips_pixels():
     img = _make_test_image()
     raw = np.asarray(img, dtype=np.uint8).tobytes()
-    recovered = ros_image_to_pil(width=320, height=240, encoding="rgb8", data=raw)
+    recovered = ros_image_to_pil(
+        width=320, height=240, encoding="rgb8", data=raw)
     assert np.array_equal(np.asarray(img), np.asarray(recovered))
 
 
 def test_ros_image_to_pil_rejects_wrong_encoding():
     with pytest.raises(ValueError):
-        ros_image_to_pil(width=320, height=240, encoding="bgr8", data=b"\x00" * (320 * 240 * 3))
+        ros_image_to_pil(width=320, height=240, encoding="bgr8",
+                         data=b"\x00" * (320 * 240 * 3))
 
 
 def test_preprocessing_is_byte_for_byte_identical_to_training_path():
@@ -65,18 +67,21 @@ def test_preprocessing_is_byte_for_byte_identical_to_training_path():
     direct = preprocess(img)
 
     raw_bytes = np.asarray(img, dtype=np.uint8).tobytes()
-    via_node = preprocess(ros_image_to_pil(width=320, height=240, encoding="rgb8", data=raw_bytes))
+    via_node = preprocess(ros_image_to_pil(
+        width=320, height=240, encoding="rgb8", data=raw_bytes))
 
     assert np.array_equal(direct, via_node)
 
 
-@pytest.mark.skipif(not os.path.exists(SAMPLE_IMAGE), reason="dataset not generated locally")
+@pytest.mark.skipif(not os.path.exists(SAMPLE_IMAGE),
+                    reason="dataset not generated locally")
 def test_preprocessing_matches_on_a_real_dataset_image():
     img = PILImage.open(SAMPLE_IMAGE)
     direct = preprocess(img)
     raw_bytes = np.asarray(img.convert("RGB"), dtype=np.uint8).tobytes()
-    via_node = preprocess(ros_image_to_pil(width=img.width, height=img.height,
-                                            encoding="rgb8", data=raw_bytes))
+    via_node = preprocess(ros_image_to_pil(
+        width=img.width, height=img.height,
+        encoding="rgb8", data=raw_bytes))
     assert np.array_equal(direct, via_node)
 
 
@@ -94,7 +99,7 @@ def test_wire_protocol_roundtrip_is_byte_for_byte_identical_to_direct_load():
 
     arr = np.asarray(img, dtype=np.uint8)
     frames = P.encode_state(seq=0, t_sim=0.0, pose=(0.0, 0.0, 0.0),
-                             twist=(0.0, 0.0, 0.0), img=arr)
+                            twist=(0.0, 0.0, 0.0), img=arr)
     header, payload = P.decode_state(frames)
     via_wire = preprocess(ros_image_to_pil(
         width=header["img"]["w"], height=header["img"]["h"],
@@ -103,7 +108,8 @@ def test_wire_protocol_roundtrip_is_byte_for_byte_identical_to_direct_load():
     assert np.array_equal(direct, via_wire)
 
 
-@pytest.mark.skipif(not os.path.exists(SAMPLE_IMAGE), reason="dataset not generated locally")
+@pytest.mark.skipif(not os.path.exists(SAMPLE_IMAGE),
+                    reason="dataset not generated locally")
 def test_wire_protocol_roundtrip_matches_a_real_dataset_image():
     """Same independence guarantee as the synthetic version above, on an
     actual rendered dataset PNG -- two separate PILImage.open calls, so
@@ -111,9 +117,10 @@ def test_wire_protocol_roundtrip_matches_a_real_dataset_image():
     object, only the file path."""
     direct = preprocess(PILImage.open(SAMPLE_IMAGE).convert("RGB"))
 
-    arr = np.asarray(PILImage.open(SAMPLE_IMAGE).convert("RGB"), dtype=np.uint8)
+    arr = np.asarray(
+        PILImage.open(SAMPLE_IMAGE).convert("RGB"), dtype=np.uint8)
     frames = P.encode_state(seq=0, t_sim=0.0, pose=(0.0, 0.0, 0.0),
-                             twist=(0.0, 0.0, 0.0), img=arr)
+                            twist=(0.0, 0.0, 0.0), img=arr)
     header, payload = P.decode_state(frames)
     via_wire = preprocess(ros_image_to_pil(
         width=header["img"]["w"], height=header["img"]["h"],
@@ -136,7 +143,8 @@ def test_run_inference_shapes_and_finiteness():
     model.eval()
     img = _make_test_image()
 
-    e_y, e_psi, kappa, confidence, t_pre, t_fwd = run_inference(model, img, torch.device("cpu"))
+    e_y, e_psi, kappa, confidence, t_pre, t_fwd = run_inference(
+        model, img, torch.device("cpu"))
 
     assert all(np.isfinite(v) for v in (e_y, e_psi, kappa, confidence))
     assert 0.0 <= confidence <= 1.0
@@ -151,7 +159,8 @@ def test_load_model_raises_on_a_nonexistent_checkpoint_path():
     since the whole point is that load_model must reject it before ever
     touching torch.load()."""
     with pytest.raises(FileNotFoundError):
-        load_model("/definitely/does/not/exist/lane_cnn.pt", torch.device("cpu"))
+        load_model(
+            "/definitely/does/not/exist/lane_cnn.pt", torch.device("cpu"))
 
 
 def test_distribution_stats_empty_is_none():

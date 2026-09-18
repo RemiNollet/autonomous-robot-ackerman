@@ -15,11 +15,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 casadi = pytest.importorskip("casadi")
 
-import casadi as ca
-import numpy as np
+import casadi as ca  # noqa: E402
+import numpy as np  # noqa: E402
 
-from control.mpc.model import continuous_dynamics_expr
-from control.mpc.params import L
+from control.mpc.model import continuous_dynamics_expr  # noqa: E402
+from control.mpc.params import L  # noqa: E402
 
 
 def _rk4_step(f, x, u, p, dt):
@@ -64,7 +64,7 @@ def test_kinematic_bicycle_reproduces_arc_radius():
 
     X, Y, psi, delta_final = state
 
-    assert delta_final == pytest.approx(delta, abs=1e-9)   # ddelta=0 throughout
+    assert delta_final == pytest.approx(delta, abs=1e-9)  # ddelta=0
     assert psi == pytest.approx(math.pi / 2, abs=1e-4)
 
     # Circle center at (0, R) for a left turn starting at the origin,

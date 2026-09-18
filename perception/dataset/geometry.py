@@ -1,5 +1,5 @@
-"""
-Track geometry and vehicle-to-centerline projection for the /lane_state contract.
+"""Track geometry and vehicle-to-centerline projection for the
+/lane_state contract.
 
 Implements the sign conventions from docs/lane-state-contract.md:
   - Frame: REP-103 (x forward, y left, angles CCW positive)
@@ -28,7 +28,7 @@ class LaneState:
     lateral_error: float   # m
     heading_error: float   # rad
     curvature: float       # 1/m
-    s: float                # arc length at projection point, for debugging/plots
+    s: float                # arc length at projection point, for debugging
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +75,9 @@ class Arc:
     the arc's start point, in world frame.
     """
 
-    def __init__(self, cx: float, cy: float, radius: float, start_angle: float, sweep: float):
+    def __init__(
+            self, cx: float, cy: float, radius: float,
+            start_angle: float, sweep: float):
         self.cx, self.cy = cx, cy
         self.radius = radius
         self.start_angle = start_angle
@@ -90,7 +92,8 @@ class Arc:
 
     def point_at(self, s: float) -> Tuple[float, float]:
         theta = self._angle_at(s)
-        return (self.cx + self.radius * math.cos(theta), self.cy + self.radius * math.sin(theta))
+        return (self.cx + self.radius * math.cos(theta),
+                self.cy + self.radius * math.sin(theta))
 
     def heading_at(self, s: float) -> float:
         theta = self._angle_at(s)
@@ -102,7 +105,8 @@ class Arc:
         return self._curvature
 
     def project(self, px: float, py: float) -> Tuple[float, float]:
-        """Nearest point on the arc (not the full circle) via angular clamping."""
+        """Nearest point on the arc (not the full circle), via angular
+        clamping."""
         angle_to_point = math.atan2(py - self.cy, px - self.cx)
         # Shortest signed angular gap from start_angle to the point, then
         # scaled by direction*radius to get arc length travelled. Wrapping
@@ -167,7 +171,9 @@ class Track:
 # Vehicle -> /lane_state
 # ---------------------------------------------------------------------------
 
-def compute_lane_state(track: Track, vehicle_x: float, vehicle_y: float, vehicle_heading: float) -> LaneState:
+def compute_lane_state(
+        track: Track, vehicle_x: float, vehicle_y: float,
+        vehicle_heading: float) -> LaneState:
     """Project the vehicle onto the track centerline and compute the
     /lane_state scalars, per docs/lane-state-contract.md.
 
@@ -190,17 +196,17 @@ def compute_lane_state(track: Track, vehicle_x: float, vehicle_y: float, vehicle
     # vehicle sits to the left of the centerline.
     e_y_vehicle = -dx * math.sin(t_heading) + dy * math.cos(t_heading)
 
-    # lateral_error is centerline-relative-to-vehicle (contract §2), the
-    # opposite sign of "vehicle relative to centerline":
-    #   vehicle to the vehicle's... i.e. vehicle right of centerline (e_y_vehicle<0)
-    #   => centerline left of vehicle => lateral_error > 0.
+    # lateral_error is centerline-relative-to-vehicle (contract section
+    # 2), the opposite sign of e_y_vehicle (vehicle-relative-to-centerline).
     lateral_error = -e_y_vehicle
 
-    # heading_error > 0 <=> tangent points left of vehicle heading (contract §2).
+    # heading_error > 0 <=> tangent points left of vehicle heading
+    # (contract section 2).
     heading_error = wrap_to_pi(t_heading - vehicle_heading)
 
-    return LaneState(lateral_error=lateral_error, heading_error=heading_error,
-                      curvature=curvature, s=s)
+    return LaneState(
+        lateral_error=lateral_error, heading_error=heading_error,
+        curvature=curvature, s=s)
 
 
 def reconstruct_local_path(lane_state: LaneState, x) -> float:

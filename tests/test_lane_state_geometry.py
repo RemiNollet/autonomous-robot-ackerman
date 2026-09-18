@@ -8,13 +8,16 @@ register (M1: "mislabeled or imbalanced dataset").
 """
 
 import math
-import sys
 import os
+import sys
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from perception.dataset.geometry import (
-    LineSegment, Arc, Track, compute_lane_state, reconstruct_local_path, wrap_to_pi,
+from perception.dataset.geometry import (  # noqa: E402
+    Arc, LineSegment, Track, compute_lane_state, reconstruct_local_path,
+    wrap_to_pi,
 )
 
 
@@ -32,7 +35,8 @@ def test_straight_line_vehicle_right_of_centerline():
     (positive means centerline is to the vehicle's left)."""
     track = Track([LineSegment(0, 0, heading=0.0, length=100)])
     # y = -0.3: to the right of the x-axis centerline (REP-103, y is left)
-    ls = compute_lane_state(track, vehicle_x=10.0, vehicle_y=-0.3, vehicle_heading=0.0)
+    ls = compute_lane_state(
+        track, vehicle_x=10.0, vehicle_y=-0.3, vehicle_heading=0.0)
     approx(ls.lateral_error, 0.3)
     approx(ls.heading_error, 0.0)
     approx(ls.curvature, 0.0)
@@ -40,7 +44,8 @@ def test_straight_line_vehicle_right_of_centerline():
 
 def test_straight_line_vehicle_left_of_centerline():
     track = Track([LineSegment(0, 0, heading=0.0, length=100)])
-    ls = compute_lane_state(track, vehicle_x=10.0, vehicle_y=0.5, vehicle_heading=0.0)
+    ls = compute_lane_state(
+        track, vehicle_x=10.0, vehicle_y=0.5, vehicle_heading=0.0)
     approx(ls.lateral_error, -0.5)
 
 
@@ -50,17 +55,19 @@ def test_straight_line_vehicle_left_of_centerline():
 
 def test_straight_line_tangent_left_of_heading():
     """Contract acceptance test, part 2 (corrected wording): vehicle heading
-    is rotated clockwise (right) relative to the lane tangent, so the tangent
-    is to the vehicle's left -> heading_error > 0 (calls for a left correction).
-    """
+    is rotated clockwise (right) relative to the lane tangent, so the
+    tangent is to the vehicle's left -> heading_error > 0 (calls for a
+    left correction)."""
     track = Track([LineSegment(0, 0, heading=0.0, length=100)])
-    ls = compute_lane_state(track, vehicle_x=10.0, vehicle_y=0.0, vehicle_heading=-0.2)
+    ls = compute_lane_state(
+        track, vehicle_x=10.0, vehicle_y=0.0, vehicle_heading=-0.2)
     approx(ls.heading_error, 0.2)
 
 
 def test_straight_line_tangent_right_of_heading():
     track = Track([LineSegment(0, 0, heading=0.0, length=100)])
-    ls = compute_lane_state(track, vehicle_x=10.0, vehicle_y=0.0, vehicle_heading=0.2)
+    ls = compute_lane_state(
+        track, vehicle_x=10.0, vehicle_y=0.0, vehicle_heading=0.2)
     approx(ls.heading_error, -0.2)
 
 
@@ -71,26 +78,31 @@ def test_straight_line_tangent_right_of_heading():
 def test_arc_right_turn_curvature():
     """Quarter circle, radius 10, turning right (CW, sweep < 0).
     Expect curvature = -1/radius exactly."""
-    arc = Arc(cx=0, cy=0, radius=10.0, start_angle=math.pi / 2, sweep=-math.pi / 2)
+    arc = Arc(cx=0, cy=0, radius=10.0,
+              start_angle=math.pi / 2, sweep=-math.pi / 2)
     track = Track([arc])
     # vehicle exactly on the arc at its midpoint, aligned with the tangent
     mid_s = arc.length / 2
     mx, my = arc.point_at(mid_s)
     mh = arc.heading_at(mid_s)
-    ls = compute_lane_state(track, vehicle_x=mx, vehicle_y=my, vehicle_heading=mh)
+    ls = compute_lane_state(
+        track, vehicle_x=mx, vehicle_y=my, vehicle_heading=mh)
     approx(ls.lateral_error, 0.0, tol=1e-6)
     approx(ls.heading_error, 0.0, tol=1e-6)
     approx(ls.curvature, -1.0 / 10.0)
 
 
 def test_arc_left_turn_curvature():
-    """Same geometry, sweep > 0 (CCW / left turn). Expect curvature = +1/radius."""
-    arc = Arc(cx=0, cy=0, radius=10.0, start_angle=-math.pi / 2, sweep=math.pi / 2)
+    """Same geometry, sweep > 0 (CCW / left turn). Expect curvature =
+    +1/radius."""
+    arc = Arc(cx=0, cy=0, radius=10.0,
+              start_angle=-math.pi / 2, sweep=math.pi / 2)
     track = Track([arc])
     mid_s = arc.length / 2
     mx, my = arc.point_at(mid_s)
     mh = arc.heading_at(mid_s)
-    ls = compute_lane_state(track, vehicle_x=mx, vehicle_y=my, vehicle_heading=mh)
+    ls = compute_lane_state(
+        track, vehicle_x=mx, vehicle_y=my, vehicle_heading=mh)
     approx(ls.curvature, 1.0 / 10.0)
 
 
@@ -98,7 +110,8 @@ def test_arc_lateral_offset_sign():
     """Vehicle offset from a point on a left-turning arc, along the local
     left-normal direction -> centerline is now to the vehicle's right,
     so lateral_error should be negative."""
-    arc = Arc(cx=0, cy=0, radius=10.0, start_angle=-math.pi / 2, sweep=math.pi / 2)
+    arc = Arc(cx=0, cy=0, radius=10.0,
+              start_angle=-math.pi / 2, sweep=math.pi / 2)
     track = Track([arc])
     mid_s = arc.length / 2
     mx, my = arc.point_at(mid_s)
@@ -107,7 +120,8 @@ def test_arc_lateral_offset_sign():
     offset = 0.5
     vx = mx - offset * math.sin(mh)
     vy = my + offset * math.cos(mh)
-    ls = compute_lane_state(track, vehicle_x=vx, vehicle_y=vy, vehicle_heading=mh)
+    ls = compute_lane_state(
+        track, vehicle_x=vx, vehicle_y=vy, vehicle_heading=mh)
     approx(ls.lateral_error, -offset, tol=1e-3)
 
 
@@ -120,7 +134,8 @@ def test_polynomial_reconstruction_matches_track_near_projection():
     approximate the true track shape in the vehicle frame for small x,
     on a curved track. This is the check that the MPC's preview path is
     actually representative of the lane."""
-    arc = Arc(cx=0, cy=0, radius=15.0, start_angle=-math.pi / 2, sweep=math.pi / 2)
+    arc = Arc(cx=0, cy=0, radius=15.0,
+              start_angle=-math.pi / 2, sweep=math.pi / 2)
     track = Track([arc])
     # vehicle slightly off the arc, not perfectly aligned
     s0 = arc.length * 0.3
@@ -134,8 +149,8 @@ def test_polynomial_reconstruction_matches_track_near_projection():
 
     for x_lookahead in (0.5, 1.0, 2.0):
         # true track point at arc length s0 + x_lookahead (approx, since arc
-        # length != vehicle-frame x exactly once heading/lateral error is
-        # nonzero, but close enough at these small offsets for a tolerance check)
+        # length != vehicle-frame x once heading/lateral error is nonzero,
+        # but close enough at these small offsets for a tolerance check)
         s_target = min(track.total_length, s0 + x_lookahead)
         tx, ty = track.point_at(s_target)
         # transform true track point into vehicle frame
@@ -162,5 +177,4 @@ def test_wrap_to_pi():
 
 
 if __name__ == "__main__":
-    import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))

@@ -11,11 +11,14 @@ from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from perception.model.preprocess import (
-    crop_and_resize, to_standardized_array, preprocess, augment_image, RESIZE_TO, CROP,
+from perception.model.preprocess import (  # noqa: E402
+    RESIZE_TO, augment_image, crop_and_resize, preprocess,
+    to_standardized_array,
 )
 
-SAMPLE_IMAGE = os.path.join(os.path.dirname(__file__), "..", "data", "dataset_v0", "images", "img_00000.png")
+SAMPLE_IMAGE = os.path.join(
+    os.path.dirname(__file__), "..", "data", "dataset_v0",
+    "images", "img_00000.png")
 
 
 def _make_test_image() -> Image.Image:
@@ -64,11 +67,14 @@ def test_augment_image_is_stochastic_but_shape_preserving():
     c = augment_image(img, rng_c)
 
     assert a.size == img.size == c.size
-    assert np.array_equal(np.asarray(a), np.asarray(b)), "same seed must reproduce the same augmentation"
-    assert not np.array_equal(np.asarray(a), np.asarray(c)), "different seeds must differ"
+    assert np.array_equal(np.asarray(a), np.asarray(b)), (
+        "same seed must reproduce the same augmentation")
+    assert not np.array_equal(np.asarray(a), np.asarray(c)), (
+        "different seeds must differ")
 
 
-@pytest.mark.skipif(not os.path.exists(SAMPLE_IMAGE), reason="dataset not generated locally")
+@pytest.mark.skipif(not os.path.exists(SAMPLE_IMAGE),
+                    reason="dataset not generated locally")
 def test_preprocess_on_a_real_dataset_image():
     img = Image.open(SAMPLE_IMAGE)
     arr = preprocess(img)

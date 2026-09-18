@@ -36,9 +36,11 @@ def _round_channels(base: int, width_mult: float) -> int:
     return max(1, int(round(base * width_mult)))
 
 
-def _conv_bn_relu(in_ch: int, out_ch: int, k: int, s: int, p: int) -> nn.Sequential:
+def _conv_bn_relu(
+        in_ch: int, out_ch: int, k: int, s: int, p: int) -> nn.Sequential:
     return nn.Sequential(
-        nn.Conv2d(in_ch, out_ch, kernel_size=k, stride=s, padding=p, bias=False),
+        nn.Conv2d(
+            in_ch, out_ch, kernel_size=k, stride=s, padding=p, bias=False),
         nn.BatchNorm2d(out_ch),
         nn.ReLU(inplace=True),
     )
@@ -99,7 +101,10 @@ def count_params(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
 
 
-def count_macs(model: nn.Module, input_shape: Tuple[int, int, int] = (IN_CHANNELS, IN_HEIGHT, IN_WIDTH)) -> int:
+def count_macs(
+        model: nn.Module,
+        input_shape: Tuple[int, int, int] = (
+            IN_CHANNELS, IN_HEIGHT, IN_WIDTH)) -> int:
     """Multiply-accumulate count, computed from the actual graph via forward
     hooks on Conv2d/Linear -- not a hand-derived constant, so it tracks the
     architecture (and width_mult) automatically if either changes.

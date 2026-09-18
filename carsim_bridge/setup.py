@@ -33,7 +33,8 @@ setup(
         # `exec` into the venv's python3 -- installed verbatim, so
         # nothing ever rewrites their shebang. `ros2 run` finds them the
         # same way either way: both paths install to lib/<pkg>/<name>.
-        ('lib/' + package_name, ['scripts/perception_node', 'scripts/mpc_node']),
+        ('lib/' + package_name,
+            ['scripts/perception_node', 'scripts/mpc_node']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

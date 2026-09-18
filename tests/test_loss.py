@@ -11,7 +11,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 torch = pytest.importorskip("torch")
 
-from perception.model.loss import lane_loss, LAMBDA_CONF, COMPONENT_WEIGHTS, component_losses
+from perception.model.loss import (  # noqa: E402
+    COMPONENT_WEIGHTS, LAMBDA_CONF, component_losses, lane_loss,
+)
 
 
 def test_regression_loss_is_exactly_zero_on_all_invalid_batch():
@@ -48,7 +50,7 @@ def test_kappa_weight_is_zero_by_default():
     batch = 5
     pred_a = torch.randn(batch, 4)
     pred_b = pred_a.clone()
-    pred_b[:, 2] = torch.randn(batch) * 1000.0  # kappa channel only, wildly different
+    pred_b[:, 2] = torch.randn(batch) * 1000.0  # kappa only, wildly off
     target = torch.randn(batch, 3)
     valid = torch.ones(batch)
 
@@ -69,7 +71,8 @@ def test_regression_loss_matches_weighted_mean_of_e_y_and_e_psi_by_default():
 
     total, regression_loss, confidence_loss = lane_loss(pred, target, valid)
 
-    per_target = torch.nn.functional.smooth_l1_loss(pred[:, :3], target, reduction="none").mean(dim=0)
+    per_target = torch.nn.functional.smooth_l1_loss(
+        pred[:, :3], target, reduction="none").mean(dim=0)
     expected_reg = (per_target[0] + per_target[1]) / 2.0
     assert torch.isclose(regression_loss, expected_reg, atol=1e-6)
     assert regression_loss.item() > 0.0
@@ -86,7 +89,8 @@ def test_component_weights_equal_reproduces_unweighted_mean():
     valid = torch.ones(batch)
 
     _, regression_loss, _ = lane_loss(
-        pred, target, valid, component_weights={"e_y": 1.0, "e_psi": 1.0, "kappa": 1.0}
+        pred, target, valid,
+        component_weights={"e_y": 1.0, "e_psi": 1.0, "kappa": 1.0}
     )
     expected_reg = torch.nn.functional.smooth_l1_loss(pred[:, :3], target)
     assert torch.isclose(regression_loss, expected_reg, atol=1e-6)
@@ -108,7 +112,8 @@ def test_mixed_batch_regression_loss_ignores_invalid_rows():
     valid_mixed = torch.cat([torch.ones(3), torch.zeros(2)])
 
     _, reg_mixed, _ = lane_loss(pred_mixed, target_mixed, valid_mixed)
-    _, reg_valid_only, _ = lane_loss(pred_valid_rows, target_valid_rows, torch.ones(3))
+    _, reg_valid_only, _ = lane_loss(
+        pred_valid_rows, target_valid_rows, torch.ones(3))
 
     assert torch.isclose(reg_mixed, reg_valid_only, atol=1e-6)
 
@@ -140,4 +145,5 @@ def test_component_losses_zero_on_all_invalid_batch():
     target = torch.randn(4, 3) * 50.0
     valid = torch.zeros(4)
     comps = component_losses(pred, target, valid)
-    assert comps["e_y"] == 0.0 and comps["e_psi"] == 0.0 and comps["kappa"] == 0.0
+    assert (comps["e_y"] == 0.0 and comps["e_psi"] == 0.0
+            and comps["kappa"] == 0.0)

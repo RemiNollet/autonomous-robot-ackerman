@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Controleur bidon -- jalon 1 uniquement.
+"""Dummy controller -- milestone 1 only.
 
-Aucune perception, aucun MPC : juste de quoi prouver que la boucle
-complete circule. Il sera remplace par le noeud MPC.
+No perception, no MPC: just enough to prove the full loop circulates.
+Gets replaced by the MPC node.
 """
 import math
 
@@ -27,18 +27,20 @@ class DummyController(Node):
         self.period = self.get_parameter('steer_period').value
 
         self.pub = self.create_publisher(Twist, 'carsim/cmd', 10)
-        self.create_subscription(Odometry, 'carsim/odom', self.on_odom,
-                                 QoSPresetProfiles.SENSOR_DATA.value)
+        self.create_subscription(
+            Odometry, 'carsim/odom', self.on_odom,
+            QoSPresetProfiles.SENSOR_DATA.value)
         self.have_odom = False
         self.t0 = self.get_clock().now()
-        self.create_timer(1.0 / self.get_parameter('rate_hz').value, self.tick)
+        rate_hz = self.get_parameter('rate_hz').value
+        self.create_timer(1.0 / rate_hz, self.tick)
 
     def on_odom(self, msg):
         self.have_odom = True
 
     def tick(self):
         if not self.have_odom:
-            return  # on ne commande pas un robot dont on ne recoit pas l'etat
+            return  # don't command a robot we haven't heard from yet
         t = (self.get_clock().now() - self.t0).nanoseconds * 1e-9
         cmd = Twist()
         cmd.linear.x = self.accel

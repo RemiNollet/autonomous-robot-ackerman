@@ -67,13 +67,15 @@ def distribution_stats(samples_s, scale=1000.0):
     }
 
 
-def ros_image_to_pil(width: int, height: int, encoding: str, data) -> PILImage.Image:
+def ros_image_to_pil(
+        width: int, height: int, encoding: str, data) -> PILImage.Image:
     """sensor_msgs/Image fields -> PIL Image. Matches carsim_bridge/
     protocol.py's encode_state: packed HxWx3 uint8, encoding="rgb8",
     step=width*3. Takes raw bytes rather than a constructed Image message so
     it has no rclpy/sensor_msgs dependency and is testable without one."""
     if encoding != "rgb8":
-        raise ValueError(f"perception_node expects rgb8, got encoding={encoding!r}")
+        raise ValueError(
+            f"perception_node expects rgb8, got encoding={encoding!r}")
     arr = np.frombuffer(bytes(data), dtype=np.uint8).reshape(height, width, 3)
     return PILImage.fromarray(arr, mode="RGB")
 
@@ -100,7 +102,9 @@ def load_model(checkpoint_path: str, device: torch.device) -> torch.nn.Module:
     return model
 
 
-def run_inference(model: torch.nn.Module, pil_img: PILImage.Image, device: torch.device):
+def run_inference(
+        model: torch.nn.Module, pil_img: PILImage.Image,
+        device: torch.device):
     """Preprocess + forward pass, timed separately -- the assumption going in
     was that preprocessing would dominate on a model this small, which
     matters for the embedded budget; measured Mac-CPU numbers contradicted
@@ -127,7 +131,9 @@ def run_inference(model: torch.nn.Module, pil_img: PILImage.Image, device: torch
         pred, _ = model(x)
     t2 = time.perf_counter()
 
-    e_y_n, e_psi_n, kappa_n = pred[0, 0].item(), pred[0, 1].item(), pred[0, 2].item()
+    e_y_n = pred[0, 0].item()
+    e_psi_n = pred[0, 1].item()
+    kappa_n = pred[0, 2].item()
     e_y, e_psi, kappa = denormalize_targets(e_y_n, e_psi_n, kappa_n)
     confidence = torch.sigmoid(pred[0, 3]).item()
 

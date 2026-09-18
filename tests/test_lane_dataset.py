@@ -13,9 +13,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 torch = pytest.importorskip("torch")
 
-from perception.model.dataset import LaneDataset, LABELS_CSV
+from perception.model.dataset import LABELS_CSV, LaneDataset  # noqa: E402
 
-pytestmark = pytest.mark.skipif(not os.path.exists(LABELS_CSV), reason="dataset not generated locally")
+pytestmark = pytest.mark.skipif(
+    not os.path.exists(LABELS_CSV), reason="dataset not generated locally")
 
 
 def test_split_filtering_is_disjoint_and_covers_everything():
@@ -31,7 +32,8 @@ def test_mirrored_filter_splits_each_split_in_half():
     train_src = LaneDataset(split="train", mirrored=False)
     train_mirror = LaneDataset(split="train", mirrored=True)
     assert len(train_src) + len(train_mirror) == len(train)
-    assert len(train_src) == len(train_mirror), "every source row has exactly one mirror twin"
+    assert len(train_src) == len(train_mirror), (
+        "every source row has exactly one mirror twin")
 
 
 def test_item_shape_and_target_normalization_range():
@@ -43,7 +45,8 @@ def test_item_shape_and_target_normalization_range():
     if valid.item() >= 0.5:
         # normalized targets should be within the declared positive envelope,
         # with a little headroom for floating point at the exact boundary
-        assert (target.abs() <= 1.01).all(), f"normalized target out of range: {target}"
+        assert (target.abs() <= 1.01).all(), (
+            f"normalized target out of range: {target}")
 
 
 def test_augmentation_does_not_change_target():

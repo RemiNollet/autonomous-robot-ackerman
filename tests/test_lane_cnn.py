@@ -10,8 +10,13 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 torch = pytest.importorskip("torch")
+from torch.utils.data import DataLoader, Subset  # noqa: E402
 
-from perception.model.lane_cnn import LaneCNN, IN_CHANNELS, IN_HEIGHT, IN_WIDTH, count_params, count_macs
+from perception.model.dataset import LaneDataset  # noqa: E402
+from perception.model.lane_cnn import (  # noqa: E402
+    IN_CHANNELS, IN_HEIGHT, IN_WIDTH, LaneCNN, count_macs, count_params,
+)
+from perception.model.loss import lane_loss  # noqa: E402
 
 TARGET_PARAMS = 417_000
 TARGET_MACS = 33.2e6
@@ -26,7 +31,8 @@ def test_output_shape_and_finite_on_random_batch():
     with torch.no_grad():
         out, feat = model(x)
     assert out.shape == (6, 4)
-    assert feat.shape == (6, 96, 5, 10), "b3 feature map shape changed -- check the encoder strides"
+    assert feat.shape == (6, 96, 5, 10), (
+        "b3 feature map shape changed -- check the encoder strides")
     assert torch.isfinite(out).all()
     assert torch.isfinite(feat).all()
 
@@ -35,14 +41,17 @@ def test_param_count_within_5_percent_of_417k():
     model = LaneCNN(width_mult=1.0)
     n = count_params(model)
     rel_err = abs(n - TARGET_PARAMS) / TARGET_PARAMS
-    assert rel_err <= TOLERANCE, f"param count {n:,} is {rel_err:.1%} off target {TARGET_PARAMS:,}"
+    assert rel_err <= TOLERANCE, (
+        f"param count {n:,} is {rel_err:.1%} off target {TARGET_PARAMS:,}")
 
 
 def test_mac_count_within_5_percent_of_33_2m():
     model = LaneCNN(width_mult=1.0)
     macs = count_macs(model)
     rel_err = abs(macs - TARGET_MACS) / TARGET_MACS
-    assert rel_err <= TOLERANCE, f"MAC count {macs:,} is {rel_err:.1%} off target {TARGET_MACS:,.0f}"
+    assert rel_err <= TOLERANCE, (
+        f"MAC count {macs:,} is {rel_err:.1%} off target "
+        f"{TARGET_MACS:,.0f}")
 
 
 def test_width_mult_actually_scales_capacity():
@@ -57,7 +66,9 @@ def test_width_mult_actually_scales_capacity():
     x = torch.randn(2, IN_CHANNELS, IN_HEIGHT, IN_WIDTH)
     out, feat = quarter(x)
     assert out.shape == (2, 4)
-    assert feat.shape[1] == 24, "b3 channel count should also scale with width_mult (96 * 0.25 = 24)"
+    assert feat.shape[1] == 24, (
+        "b3 channel count should also scale with width_mult "
+        "(96 * 0.25 = 24)")
 
 
 def test_overfit_eight_samples_below_1en3():
@@ -68,15 +79,13 @@ def test_overfit_eight_samples_below_1en3():
     memorize 8 examples" mostly just measures dropout noise, not model or
     training-loop correctness. BatchNorm stays in train mode (adapting to
     the 8-sample batch statistics, as it would during real training)."""
-    from perception.model.dataset import LaneDataset
-    from perception.model.loss import lane_loss
-    from torch.utils.data import DataLoader, Subset
-
     torch.manual_seed(0)
     ds = LaneDataset(split="train", augment=False)
     subset = Subset(ds, list(range(8)))
-    img, target, valid = next(iter(DataLoader(subset, batch_size=8, shuffle=False)))
-    assert valid.sum() > 0, "fixture batch must contain at least one valid sample"
+    loader = DataLoader(subset, batch_size=8, shuffle=False)
+    img, target, valid = next(iter(loader))
+    assert valid.sum() > 0, (
+        "fixture batch must contain at least one valid sample")
 
     model = LaneCNN(width_mult=1.0)
     model.train()
@@ -91,4 +100,6 @@ def test_overfit_eight_samples_below_1en3():
         loss.backward()
         optimizer.step()
 
-    assert loss.item() < 1e-3, f"final loss {loss.item():.5f} did not collapse on 8 memorized samples"
+    assert loss.item() < 1e-3, (
+        f"final loss {loss.item():.5f} did not collapse on 8 memorized "
+        f"samples")

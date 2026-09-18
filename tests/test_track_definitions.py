@@ -8,15 +8,15 @@ radii" is nominal, not real.
 """
 
 import math
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from perception.dataset.track_definitions import (
-    REFERENCE_TRACK, RADIUS_1, RADIUS_2,
+from perception.dataset.geometry import wrap_to_pi  # noqa: E402
+from perception.dataset.track_definitions import (  # noqa: E402
+    RADIUS_1, RADIUS_2, REFERENCE_TRACK,
 )
-from perception.dataset.geometry import wrap_to_pi
 
 
 def test_track_closes_position():

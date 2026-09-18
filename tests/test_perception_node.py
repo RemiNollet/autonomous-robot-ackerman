@@ -17,20 +17,20 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-# Second entry: carsim_bridge is a nested ament_python package
-# (carsim_bridge/carsim_bridge/), so `import carsim_bridge.X` needs the
-# outer carsim_bridge/ directory on sys.path too, not just the repo root
-# that resolves `perception.*` above.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "carsim_bridge"))
+# carsim_bridge is a nested ament_python package, so importing
+# carsim_bridge.X also needs its outer directory on sys.path.
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "carsim_bridge"))
 
 torch = pytest.importorskip("torch")
 rclpy = pytest.importorskip("rclpy")
 pytest.importorskip("carsim_msgs.msg")
 
-from rclpy.parameter import Parameter
+from rclpy.parameter import Parameter  # noqa: E402
+from sensor_msgs.msg import Image  # noqa: E402
 
-import carsim_bridge.perception_node as pn
-from perception.model.lane_cnn import LaneCNN
+import carsim_bridge.perception_node as pn  # noqa: E402
+from perception.model.lane_cnn import LaneCNN  # noqa: E402
 
 
 @pytest.fixture
@@ -64,16 +64,15 @@ def test_node_constructs_without_a_live_graph(tmp_checkpoint):
         node.destroy_node()
 
 
-def test_publishes_lane_state_with_propagated_stamp_from_synthetic_image(tmp_checkpoint):
-    from sensor_msgs.msg import Image
-
+def test_publishes_lane_state_with_propagated_stamp_from_synthetic_image(
+        tmp_checkpoint):
     node = pn.PerceptionNode(parameter_overrides=[
         Parameter('checkpoint_path', value=tmp_checkpoint),
         Parameter('device', value='cpu'),
     ])
     try:
         published = []
-        node.pub.publish = published.append  # capture instead of sending on a live graph
+        node.pub.publish = published.append  # capture, no live graph
 
         rng = np.random.default_rng(1)
         img_arr = rng.integers(0, 256, size=(240, 320, 3), dtype=np.uint8)
@@ -108,7 +107,8 @@ def test_publishes_lane_state_with_propagated_stamp_from_synthetic_image(tmp_che
         node.destroy_node()
 
 
-def test_stats_report_fires_after_window_and_resets_buffers(tmp_checkpoint, tmp_path):
+def test_stats_report_fires_after_window_and_resets_buffers(
+        tmp_checkpoint, tmp_path):
     """Regression test for a real pitfall: get_clock().now() and
     Time.from_msg(msg.header.stamp) don't share a clock_type by default, and
     subtracting two rclpy Time objects directly raises when they don't
@@ -117,8 +117,6 @@ def test_stats_report_fires_after_window_and_resets_buffers(tmp_checkpoint, tmp_
     own dedicated regression test below -- this one only needs SOME
     clock_type-correct stamp to exercise the age-at-publish code path and
     confirm the stats report/reset machinery around it."""
-    from sensor_msgs.msg import Image
-
     stats_path = tmp_path / "stats.md"
     node = pn.PerceptionNode(parameter_overrides=[
         Parameter('checkpoint_path', value=tmp_checkpoint),
@@ -162,7 +160,8 @@ def test_stats_report_fires_after_window_and_resets_buffers(tmp_checkpoint, tmp_
         node.destroy_node()
 
 
-def test_age_calibration_handles_sim_clock_vs_wall_clock_offset(tmp_checkpoint):
+def test_age_calibration_handles_sim_clock_vs_wall_clock_offset(
+        tmp_checkpoint):
     """header.stamp is t_sim (sim-clock-relative, small numbers -- ADR-13),
     NOT wall-clock epoch time; self.get_clock().now() IS wall-clock epoch
     (no node in this graph sets use_sim_time). Directly subtracting them --
@@ -173,8 +172,6 @@ def test_age_calibration_handles_sim_clock_vs_wall_clock_offset(tmp_checkpoint):
     wall_clock_offset, this test's template) back into this node. Confirm
     the shared AgeCalibrator corrects for it here too, not just that
     on_image runs."""
-    from sensor_msgs.msg import Image
-
     node = pn.PerceptionNode(parameter_overrides=[
         Parameter('checkpoint_path', value=tmp_checkpoint),
         Parameter('device', value='cpu'),

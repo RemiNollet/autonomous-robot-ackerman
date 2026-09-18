@@ -101,7 +101,7 @@ def continuous_dynamics_expr(x, u, p):
     CasADi SX/MX/DM vectors matching kinematic_bicycle_model's layout:
     x=[X,Y,psi,delta], u=[ddelta], p=[c0,c1,c2,v] (c0/c1/c2 unused here,
     kept for a consistent parameter vector shape with the OCP model)."""
-    X, Y, psi, delta = x[0], x[1], x[2], x[3]
+    psi, delta = x[2], x[3]
     ddelta = u[0]
     v = p[3]
     return ca.vertcat(

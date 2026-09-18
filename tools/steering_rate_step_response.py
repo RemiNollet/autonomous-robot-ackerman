@@ -52,17 +52,17 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import mujoco
-import numpy as np
+import mujoco  # noqa: E402
+import numpy as np  # noqa: E402
 
-from control.mpc.params import DELTA_MAX
+from control.mpc.params import DELTA_MAX  # noqa: E402
 
 VEHICLE_XML = "sim/models/car.xml"
 
-T_SETTLE_GRAVITY = 0.5   # s, let the car come to rest on the ground first
-T_SETTLE_HOLD = 1.0      # s, let steering settle at -DELTA_MAX before the step
-T_RECORD = 1.0           # s, recording window after the step (>> observed settling time)
-SETTLE_BAND = 0.02       # 2% settling-time criterion
+T_SETTLE_GRAVITY = 0.5  # s, let the car come to rest on the ground first
+T_SETTLE_HOLD = 1.0     # s, let steering settle at -DELTA_MAX before the step
+T_RECORD = 1.0          # s, recording window (>> observed settling time)
+SETTLE_BAND = 0.02      # 2% settling-time criterion
 
 
 def _cross_time(t_hist, q_hist, start, target, frac):
@@ -92,8 +92,10 @@ def measure_delta_dot_max(settle_band: float = SETTLE_BAND) -> dict:
     jid_fr = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "steer_fr")
     qadr, dadr = model.jnt_qposadr[jid], model.jnt_dofadr[jid]
     qadr_fr = model.jnt_qposadr[jid_fr]
-    a_fl = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "a_steer_fl")
-    a_fr = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "a_steer_fr")
+    a_fl = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_ACTUATOR, "a_steer_fl")
+    a_fr = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_ACTUATOR, "a_steer_fr")
 
     forcelimited = bool(model.actuator_forcelimited[a_fl])
 
@@ -120,7 +122,8 @@ def measure_delta_dot_max(settle_band: float = SETTLE_BAND) -> dict:
     q_hist = np.array(q_hist)
     v_hist = np.array(v_hist)
 
-    t_settle = _cross_time(t_hist, q_hist, settled_at_start, DELTA_MAX, 1.0 - settle_band)
+    t_settle = _cross_time(
+        t_hist, q_hist, settled_at_start, DELTA_MAX, 1.0 - settle_band)
     span = DELTA_MAX - settled_at_start
     rate = span / t_settle
 
@@ -130,7 +133,8 @@ def measure_delta_dot_max(settle_band: float = SETTLE_BAND) -> dict:
         "forcelimited": forcelimited,
         "settled_at_start": settled_at_start,
         "final_qpos": float(q_hist[-1]),
-        "fl_fr_symmetric": abs(float(data.qpos[qadr]) - float(data.qpos[qadr_fr])) < 1e-6,
+        "fl_fr_symmetric": (
+            abs(float(data.qpos[qadr]) - float(data.qpos[qadr_fr])) < 1e-6),
         "settle_band": settle_band,
         "t_settle": float(t_settle),
         "span_rad": float(span),
@@ -142,20 +146,28 @@ def measure_delta_dot_max(settle_band: float = SETTLE_BAND) -> dict:
 
 def main():
     report = measure_delta_dot_max()
+    if report['forcelimited']:
+        torque_desc = 'torque-limited'
+    else:
+        torque_desc = 'UNLIMITED torque/current -- idealized PD servo'
     print(f"Actuator forcelimited: {report['forcelimited']} "
-          f"({'torque-limited' if report['forcelimited'] else 'UNLIMITED torque/current -- idealized PD servo'})")
+          f"({torque_desc})")
     print(f"Settled start position: {report['settled_at_start']:.6f} rad "
           f"(commanded -{DELTA_MAX}, fl==fr: {report['fl_fr_symmetric']})")
     print(f"Full sweep: {report['settled_at_start']:.4f} -> {DELTA_MAX} rad "
           f"(span {report['span_rad']:.4f} rad)")
-    print(f"{report['settle_band']*100:.0f}% settling time: {report['t_settle']:.4f} s")
-    print(f"DELTA_DOT_MAX (measured, avg over full sweep) = {report['delta_dot_max_measured']:.4f} rad/s "
-          f"-- UPPER BOUND from an unlimited-torque actuator, not a conservative estimate "
-          f"(forcelimited={report['forcelimited']}); a real servo would settle slower.")
+    print(f"{report['settle_band']*100:.0f}% settling time: "
+          f"{report['t_settle']:.4f} s")
+    print(f"DELTA_DOT_MAX (measured, avg over full sweep) = "
+          f"{report['delta_dot_max_measured']:.4f} rad/s -- UPPER BOUND "
+          f"from an unlimited-torque actuator, not a conservative "
+          f"estimate (forcelimited={report['forcelimited']}); a real "
+          f"servo would settle slower.")
     print(f"Peak instantaneous |qvel| = {report['peak_qvel']:.4f} rad/s "
           f"at t={report['peak_qvel_time']:.4f} s "
           f"(NOT usable as a sustained-rate bound -- see module docstring)")
-    print(f"Final qpos after {T_RECORD}s: {report['final_qpos']:.6f} (target {DELTA_MAX})")
+    print(f"Final qpos after {T_RECORD}s: {report['final_qpos']:.6f} "
+          f"(target {DELTA_MAX})")
 
 
 if __name__ == "__main__":

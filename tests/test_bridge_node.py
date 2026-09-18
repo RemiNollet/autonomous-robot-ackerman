@@ -13,16 +13,16 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-# Second entry: carsim_bridge is a nested ament_python package
-# (carsim_bridge/carsim_bridge/), so `import carsim_bridge.X` needs the
-# outer carsim_bridge/ directory on sys.path too.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "carsim_bridge"))
+# carsim_bridge is a nested ament_python package, so importing
+# carsim_bridge.X also needs its outer directory on sys.path.
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "carsim_bridge"))
 
 rclpy = pytest.importorskip("rclpy")
 
-from rclpy.time import Time as RclpyTime
+from rclpy.time import Time as RclpyTime  # noqa: E402
 
-import carsim_bridge.bridge_node as bn
+import carsim_bridge.bridge_node as bn  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

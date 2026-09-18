@@ -23,16 +23,18 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-import matplotlib
+import matplotlib  # noqa: E402
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
-import torch
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
 
-from perception.dataset.track_definitions import REFERENCE_TRACK
-from perception.model.dataset import LaneDataset
-from perception.model.lane_cnn import LaneCNN
-from perception.model.targets import KAPPA_SCALE
+from perception.dataset.track_definitions import (  # noqa: E402
+    REFERENCE_TRACK,
+)
+from perception.model.dataset import LaneDataset  # noqa: E402
+from perception.model.lane_cnn import LaneCNN  # noqa: E402
+from perception.model.targets import KAPPA_SCALE  # noqa: E402
 
 CHECKPOINT_PATH = "perception/model/checkpoints/lane_cnn_width1.0_best.pt"
 # NOT kappa_transition_proximity.png (no suffix): that file is the frozen,
@@ -62,7 +64,7 @@ def main():
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
 
-    ds = LaneDataset(split=None, augment=False)  # full dataset -- see module docstring
+    ds = LaneDataset(split=None, augment=False)  # full dataset (see above)
     rows = ds.rows
 
     preds = []
@@ -84,26 +86,37 @@ def main():
     far = straight & (dist > L_USABLE)
     near = straight & (dist <= L_USABLE)
 
+    far_mean = np.abs(kappa_pred[far]).mean()
+    far_std = np.abs(kappa_pred[far]).std()
+    near_mean = np.abs(kappa_pred[near]).mean()
+    near_std = np.abs(kappa_pred[near]).std()
     print(f"straight samples (all splits): n={straight.sum()}")
     print(f"  far from transition (> {L_USABLE} m): n={far.sum():4d}  "
-          f"mean|kappa_pred|={np.abs(kappa_pred[far]).mean():.4f}  std={np.abs(kappa_pred[far]).std():.4f}")
+          f"mean|kappa_pred|={far_mean:.4f}  std={far_std:.4f}")
     print(f"  near a transition  (<= {L_USABLE} m): n={near.sum():4d}  "
-          f"mean|kappa_pred|={np.abs(kappa_pred[near]).mean():.4f}  std={np.abs(kappa_pred[near]).std():.4f}")
+          f"mean|kappa_pred|={near_mean:.4f}  std={near_std:.4f}")
 
     for split in ("train", "val", "test"):
         d = dist[straight & (splits == split)]
+        frac_far = (d > L_USABLE).mean() * 100
         print(f"  {split:5s} straight dist-to-transition range: "
-              f"[{d.min():.2f}, {d.max():.2f}] m  (frac > {L_USABLE}m: {(d > L_USABLE).mean()*100:.1f}%)")
+              f"[{d.min():.2f}, {d.max():.2f}] m  "
+              f"(frac > {L_USABLE}m: {frac_far:.1f}%)")
 
     corr = np.corrcoef(dist[straight], np.abs(kappa_pred[straight]))[0, 1]
     print(f"\ncorr(dist_to_transition, |kappa_pred|) on straights: {corr:.4f}")
 
-    buckets = [(0, 0.5), (0.5, 1.0), (1.0, 1.5), (1.5, L_USABLE), (L_USABLE, 3.5), (3.5, 6.0)]
+    buckets = [
+        (0, 0.5), (0.5, 1.0), (1.0, 1.5), (1.5, L_USABLE),
+        (L_USABLE, 3.5), (3.5, 6.0),
+    ]
     print("\ndistance bucket -> mean|kappa_pred| (straights only):")
     for lo, hi in buckets:
         m = straight & (dist > lo) & (dist <= hi)
         if m.sum() > 0:
-            print(f"  ({lo:.2f}, {hi:.2f}] m:  n={m.sum():4d}  mean|kappa_pred|={np.abs(kappa_pred[m]).mean():.4f}")
+            mean_kp = np.abs(kappa_pred[m]).mean()
+            print(f"  ({lo:.2f}, {hi:.2f}] m:  n={m.sum():4d}  "
+                  f"mean|kappa_pred|={mean_kp:.4f}")
 
     bins = [("straight (kappa=0)", 0.0, "tab:blue"),
             ("R=5m (|kappa|=1/5)", 1 / 5, "tab:orange"),
@@ -111,13 +124,18 @@ def main():
     fig, ax = plt.subplots(figsize=(9, 6))
     for label, mag, color in bins:
         m = valid_mask & (np.abs(np.abs(kappa_true) - mag) < 1e-6)
-        ax.scatter(dist[m], np.abs(kappa_pred[m]), s=10, alpha=0.4, color=color, label=f"{label} (n={m.sum()})")
-    ax.axvline(L_USABLE, color="k", linestyle="--", linewidth=1.2, label=f"L_usable = {L_USABLE} m")
-    ax.set_xlabel("arc-length distance to next curvature transition ahead [m]")
+        ax.scatter(
+            dist[m], np.abs(kappa_pred[m]), s=10, alpha=0.4, color=color,
+            label=f"{label} (n={m.sum()})")
+    ax.axvline(
+        L_USABLE, color="k", linestyle="--", linewidth=1.2,
+        label=f"L_usable = {L_USABLE} m")
+    ax.set_xlabel("arc-length distance to next curvature transition [m]")
     ax.set_ylabel("|kappa_pred| [1/m]")
-    ax.set_title("|kappa_pred| vs distance to next transition, all splits\n"
-                  "(test alone has zero straight samples beyond L_usable -- ADR-9 stratification "
-                  "confines it to each primitive's last 10%)")
+    ax.set_title(
+        "|kappa_pred| vs distance to next transition, all splits\n"
+        "(test alone has zero straight samples beyond L_usable -- "
+        "ADR-9 stratification confines it to each primitive's last 10%)")
     ax.legend(fontsize=8, loc="upper right")
     ax.set_xlim(0, TRACK_LENGTH / 2 + 0.5)
     fig.tight_layout()

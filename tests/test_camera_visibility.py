@@ -15,18 +15,22 @@ import math
 import os
 import sys
 
+import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from perception.dataset.camera_visibility import (
-    point_in_camera_frame, point_visible, point_visible_in_crop, project_to_pixel,
-    lane_is_visible, any_lane_visible, IMG_WIDTH, IMG_HEIGHT,
-    CROP_TOP, CROP_BOTTOM, CROP_LEFT, CROP_RIGHT,
+from perception.dataset.camera_visibility import (  # noqa: E402
+    point_in_camera_frame, point_visible, point_visible_in_crop,
+    project_to_pixel, lane_is_visible, any_lane_visible, IMG_WIDTH,
+    IMG_HEIGHT, CROP_TOP, CROP_BOTTOM, CROP_LEFT, CROP_RIGHT,
 )
-from perception.dataset.track_definitions import REFERENCE_TRACK, LANE_HALF_WIDTH
+from perception.dataset.track_definitions import (  # noqa: E402
+    REFERENCE_TRACK, LANE_HALF_WIDTH,
+)
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "sim", "models", "car.xml")
+MODEL_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "sim", "models", "car.xml")
 
 
 @pytest.mark.skipif(
@@ -34,7 +38,6 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "sim", "models", "car
 )
 def test_matches_mujoco_extrinsics():
     mujoco = pytest.importorskip("mujoco")
-    import numpy as np
 
     model = mujoco.MjModel.from_xml_path(MODEL_PATH)
     data = mujoco.MjData(model)
@@ -57,7 +60,8 @@ def test_matches_mujoco_extrinsics():
 
         p = np.array([rng.uniform(-8, 8), rng.uniform(-8, 8), 0.02])
         expected = cammat.T @ (p - campos)
-        actual = np.array(point_in_camera_frame(p[0], p[1], p[2], vx, vy, heading))
+        actual = np.array(
+            point_in_camera_frame(p[0], p[1], p[2], vx, vy, heading))
         max_err = max(max_err, float(np.abs(expected - actual).max()))
 
     assert max_err < 1e-9, (
@@ -82,8 +86,8 @@ def test_lane_visible_from_track_start():
 
 def test_lane_not_visible_from_far_away_facing_out():
     """Far off the loop, pointing away from it."""
-    assert not any_lane_visible(REFERENCE_TRACK, -30.0, -30.0, math.pi * 1.25,
-                                 LANE_HALF_WIDTH)
+    assert not any_lane_visible(
+        REFERENCE_TRACK, -30.0, -30.0, math.pi * 1.25, LANE_HALF_WIDTH)
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +111,6 @@ def test_lane_not_visible_from_far_away_facing_out():
 
 def test_project_to_pixel_matches_mujoco_frustum():
     mujoco = pytest.importorskip("mujoco")
-    import numpy as np
 
     if not os.path.exists(MODEL_PATH):
         pytest.skip("vehicle MJCF not available")
@@ -121,7 +124,7 @@ def test_project_to_pixel_matches_mujoco_frustum():
     cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
     cam.fixedcamid = cam_id
     opt = mujoco.MjvOption()
-    scene = mujoco.MjvScene(model, maxgeom=1000)  # comfortably above the model's own geom count
+    scene = mujoco.MjvScene(model, maxgeom=1000)  # above the model's geoms
 
     rng = np.random.default_rng(11)
     max_err = np.array([0.0, 0.0])
@@ -141,8 +144,9 @@ def test_project_to_pixel_matches_mujoco_frustum():
 
         # Independent vertical half-FOV: derived from MuJoCo's own rendered
         # frustum, not from CAM_FOVY_DEG in camera_visibility.py.
-        mujoco.mjv_updateScene(model, data, opt, None, cam,
-                                mujoco.mjtCatBit.mjCAT_ALL.value, scene)
+        mujoco.mjv_updateScene(
+            model, data, opt, None, cam,
+            mujoco.mjtCatBit.mjCAT_ALL.value, scene)
         gc = scene.camera[0]
         tan_half_fovy = gc.frustum_top / gc.frustum_near
         # Horizontal extent: the standard aspect-ratio-scaled convention.
@@ -172,9 +176,11 @@ def test_project_to_pixel_matches_mujoco_frustum():
             if u is None:
                 continue
             n_compared += 1
-            max_err = np.maximum(max_err, np.abs([u - u_expected, v - v_expected]))
+            err = np.abs([u - u_expected, v - v_expected])
+            max_err = np.maximum(max_err, err)
 
-    assert n_compared > 50, f"too few in-frustum comparison points: {n_compared}"
+    assert n_compared > 50, (
+        f"too few in-frustum comparison points: {n_compared}")
     assert max_err.max() < 0.5, (
         f"project_to_pixel diverged from MuJoCo's own frustum projection by "
         f"{max_err} px (u, v) — check fovy interpretation / aspect handling "
@@ -197,9 +203,6 @@ def test_project_to_pixel_matches_mujoco_frustum():
 
 def test_project_to_pixel_matches_rendered_markers():
     mujoco = pytest.importorskip("mujoco")
-    import numpy as np
-    import sys as _sys
-    _sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     from perception.dataset import render_dataset_images as rdi
 
     if not os.path.exists(MODEL_PATH):
@@ -211,7 +214,7 @@ def test_project_to_pixel_matches_rendered_markers():
     renderer = mujoco.Renderer(model, height=IMG_HEIGHT, width=IMG_WIDTH)
     qadr = model.jnt_qposadr[model.joint("root").id]
 
-    MARKER_RGBA = (1.0, 0.0, 1.0, 1.0)  # magenta — not used elsewhere in the scene
+    MARKER_RGBA = (1.0, 0.0, 1.0, 1.0)  # magenta, unused elsewhere in scene
 
     def measure_centroid(pixels):
         # Hue-ratio test, not an absolute-brightness threshold: MuJoCo shades
@@ -225,7 +228,9 @@ def test_project_to_pixel_matches_rendered_markers():
         r = pixels[:, :, 0].astype(int)
         g = pixels[:, :, 1].astype(int)
         b = pixels[:, :, 2].astype(int)
-        mask = (r > 20) & (b > 20) & (np.abs(r - b) < 20) & (g < 0.4 * np.minimum(r, b) + 5)
+        mask = (
+            (r > 20) & (b > 20) & (np.abs(r - b) < 20)
+            & (g < 0.4 * np.minimum(r, b) + 5))
         ys, xs = np.nonzero(mask)
         if len(xs) == 0:
             return None
@@ -258,25 +263,29 @@ def test_project_to_pixel_matches_rendered_markers():
             wy = vy + dist * sh + lateral * ch
             wz = 0.05
 
-            u_pred, v_pred, depth, in_frame = project_to_pixel(wx, wy, wz, vx, vy, heading)
+            u_pred, v_pred, depth, in_frame = project_to_pixel(
+                wx, wy, wz, vx, vy, heading)
             if not in_frame or depth < 0.3:
                 continue  # keep clear of the near plane / frame edge
 
             renderer.update_scene(data, camera="cam_front")
-            rdi.insert_debug_marker(renderer.scene, (wx, wy, wz), MARKER_RGBA, radius=0.02)
+            rdi.insert_debug_marker(
+                renderer.scene, (wx, wy, wz), MARKER_RGBA, radius=0.02)
             pixels = renderer.render()
 
             measured = measure_centroid(pixels)
             if measured is None:
                 continue  # marker too close to the frame edge to register
             u_meas, v_meas, n_px = measured
-            assert n_px < 500, "magenta mask too large — threshold picked up more than the marker"
+            assert n_px < 500, (
+                "magenta mask too large -- picked up more than the marker")
 
             err = math.hypot(u_meas - u_pred, v_meas - v_pred)
             max_err = max(max_err, err)
             n_compared += 1
 
-    assert n_compared >= 8, f"too few markers registered in-frame: {n_compared}"
+    assert n_compared >= 8, (
+        f"too few markers registered in-frame: {n_compared}")
     assert max_err < 2.0, (
         f"project_to_pixel diverged from the rendered marker centroid by "
         f"{max_err:.2f} px — check the row-flip convention (v measured from "
@@ -309,8 +318,9 @@ def test_point_visible_in_crop_rejects_points_below_the_crop_but_in_frame():
     px, py, pz = 0.27, 0.0, 0.02
     vx, vy, heading = 0.0, 0.0, 0.0
     u, v, depth, in_frame = project_to_pixel(px, py, pz, vx, vy, heading)
-    assert in_frame, "fixture point must be in the full frame for this test to mean anything"
-    assert v > CROP_BOTTOM, f"fixture point must land below the crop (v={v}); adjust the fixture distance"
+    assert in_frame, "fixture point must be in the full frame to mean anything"
+    assert v > CROP_BOTTOM, (
+        f"fixture point must land below the crop (v={v}); adjust distance")
 
     assert point_visible(px, py, pz, vx, vy, heading) is True
     assert point_visible_in_crop(px, py, pz, vx, vy, heading) is False
@@ -321,7 +331,7 @@ def test_point_visible_in_crop_accepts_a_point_inside_the_crop():
     vx, vy, heading = 0.0, 0.0, 0.0
     u, v, depth, in_frame = project_to_pixel(px, py, pz, vx, vy, heading)
     assert in_frame and CROP_TOP <= v <= CROP_BOTTOM, (
-        f"fixture point must land inside the crop (v={v}); adjust the fixture distance"
+        f"fixture point must land inside the crop (v={v}); adjust distance"
     )
     assert point_visible_in_crop(px, py, pz, vx, vy, heading) is True
 

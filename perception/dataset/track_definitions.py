@@ -20,13 +20,13 @@ Closure by construction, not by numeric fitting:
   tests/test_track_definitions.py, since a proof on paper is not a
   substitute for checking the arithmetic.
 """
-import sys
+import math
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-from perception.dataset.geometry import LineSegment, Arc, Track
-import math
+from perception.dataset.geometry import LineSegment, Arc, Track  # noqa: E402
 
 # Two distinct radii and two distinct straight lengths -> curvature values
 # {0, 1/R1, 1/R2} appear in the dataset, not just a single constant turn.
