@@ -32,19 +32,21 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-import numpy as np
-import torch
-from torch.utils.data import DataLoader
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+from torch.utils.data import DataLoader  # noqa: E402
 
-from perception.dataset.track_definitions import REFERENCE_TRACK, LANE_HALF_WIDTH
-from perception.dataset.generate_dataset import POS_HEADING_RANGE
-from perception.model.dataset import LaneDataset
-from perception.model.lane_cnn import LaneCNN
-from perception.model.targets import KAPPA_SCALE
-from perception.model.physical_metrics import physical_metrics, format_physical_report
+from perception.dataset.track_definitions import (  # noqa: E402
+    REFERENCE_TRACK,
+)
+from perception.model.dataset import LaneDataset  # noqa: E402
+from perception.model.lane_cnn import LaneCNN  # noqa: E402
+from perception.model.targets import KAPPA_SCALE  # noqa: E402
+from perception.model.physical_metrics import physical_metrics  # noqa: E402
 
 CHECKPOINT_DIR = "perception/model/checkpoints"
-OLD_CHECKPOINT = f"{CHECKPOINT_DIR}/lane_cnn_width1.0_best_ADR14_kappa0_baseline.pt"
+OLD_CHECKPOINT = (
+    f"{CHECKPOINT_DIR}/lane_cnn_width1.0_best_ADR14_kappa0_baseline.pt")
 NEW_CHECKPOINT = f"{CHECKPOINT_DIR}/lane_cnn_width1.0_best.pt"
 L_USABLE = 2.356
 
@@ -88,7 +90,7 @@ def main():
     full_ds = LaneDataset(split=None, augment=False)
     rows = full_ds.rows
     s_vals = np.array([float(r["s"]) for r in rows])
-    kappa_true = np.array([float(r["curvature"]) for r in rows])  # relabeled (ADR-18)
+    kappa_true = np.array([float(r["curvature"]) for r in rows])  # ADR-18
     valid_mask = np.array([r["valid"] == "True" for r in rows])
     dist = np.array([dist_to_next_transition(s) for s in s_vals])
     near = (dist <= L_USABLE) & valid_mask
@@ -102,7 +104,8 @@ def main():
     kappa_pred_new = kappa_predictions(new_model, full_ds)
     kappa_pred_zero = np.zeros_like(kappa_true)
 
-    print(f"\n{'method':35s} {'near-join MAE':>15s} {'away-from-join MAE':>20s} {'ratio':>8s}")
+    print(f"\n{'method':35s} {'near-join MAE':>15s} "
+          f"{'away-from-join MAE':>20s} {'ratio':>8s}")
     for label, pred in [
         ("published today (hardcoded 0.0)", kappa_pred_zero),
         ("ADR-14 checkpoint (untrained kappa)", kappa_pred_old),
@@ -116,11 +119,19 @@ def main():
     zero_near_mae = mae(kappa_pred_zero[near], kappa_true[near])
     new_near_mae = mae(kappa_pred_new[near], kappa_true[near])
     new_away_mae = mae(kappa_pred_new[away], kappa_true[away])
-    improvement = (1 - new_near_mae / zero_near_mae) * 100 if zero_near_mae > 0 else float("nan")
-    near_away_ratio = new_near_mae / new_away_mae if new_away_mae > 0 else float("nan")
+    if zero_near_mae > 0:
+        improvement = (1 - new_near_mae / zero_near_mae) * 100
+    else:
+        improvement = float("nan")
+    if new_away_mae > 0:
+        near_away_ratio = new_near_mae / new_away_mae
+    else:
+        near_away_ratio = float("nan")
+    direction = 'improvement' if improvement > 0 else 'regression'
     print(f"\nADR-18 vs published-today baseline, near-join: "
-          f"{improvement:.1f}% {'improvement' if improvement > 0 else 'regression'}")
-    print(f"ADR-18 near-join / away-from-join MAE ratio: {near_away_ratio:.2f}")
+          f"{improvement:.1f}% {direction}")
+    print(f"ADR-18 near-join / away-from-join MAE ratio: "
+          f"{near_away_ratio:.2f}")
     print("Usability bar from the M3 'quadratic curvature relabeling' brief: "
           "near-join materially better than the zero baseline, AND "
           "near/away ratio not worse than ~2x.")
@@ -141,18 +152,24 @@ def main():
     old_phys = physical_metrics(old_model, test_loader, "cpu")
     new_phys = physical_metrics(new_model, test_loader, "cpu")
 
-    print(f"{'output':12s} {'ADR-14 (kappa=0) MAE':>22s} {'ADR-18 (kappa=1) MAE':>22s} {'delta':>10s}")
-    for key, unit, scale in [("e_y", "m", 1.0), ("e_psi", "deg", 180.0 / np.pi)]:
+    print(f"{'output':12s} {'ADR-14 (kappa=0) MAE':>22s} "
+          f"{'ADR-18 (kappa=1) MAE':>22s} {'delta':>10s}")
+    for key, unit, scale in [
+            ("e_y", "m", 1.0), ("e_psi", "deg", 180.0 / np.pi)]:
         old_v = old_phys[key]["mae"] * scale
         new_v = new_phys[key]["mae"] * scale
-        print(f"{key + ' (' + unit + ')':12s} {old_v:22.4f} {new_v:22.4f} {new_v - old_v:+10.4f}")
+        print(f"{key + ' (' + unit + ')':12s} {old_v:22.4f} {new_v:22.4f} "
+              f"{new_v - old_v:+10.4f}")
 
-    print(f"\nconfidence accuracy: ADR-14={old_phys['confidence']['accuracy']:.4f}  "
-          f"ADR-18={new_phys['confidence']['accuracy']:.4f}")
-    print(f"confidence valid recall: ADR-14={old_phys['confidence']['valid_recall']:.4f}  "
-          f"ADR-18={new_phys['confidence']['valid_recall']:.4f}")
-    print(f"confidence invalid recall: ADR-14={old_phys['confidence']['invalid_recall']:.4f}  "
-          f"ADR-18={new_phys['confidence']['invalid_recall']:.4f}")
+    old_conf, new_conf = old_phys['confidence'], new_phys['confidence']
+    print(f"\nconfidence accuracy: ADR-14={old_conf['accuracy']:.4f}  "
+          f"ADR-18={new_conf['accuracy']:.4f}")
+    print(f"confidence valid recall: ADR-14={old_conf['valid_recall']:.4f}  "
+          f"ADR-18={new_conf['valid_recall']:.4f}")
+    print(
+        f"confidence invalid recall: "
+        f"ADR-14={old_conf['invalid_recall']:.4f}  "
+        f"ADR-18={new_conf['invalid_recall']:.4f}")
 
 
 if __name__ == "__main__":

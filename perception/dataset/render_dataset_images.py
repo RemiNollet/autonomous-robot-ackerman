@@ -27,7 +27,8 @@ VEHICLE_XML = "sim/models/car.xml"
 DATASET_DIR = "data/dataset_v0"
 LABELS_CSV = f"{DATASET_DIR}/labels.csv"
 IMG_DIR = f"{DATASET_DIR}/images"
-IMG_WIDTH, IMG_HEIGHT = 320, 240   # matches the onboard camera / bridge protocol resolution
+# matches the onboard camera / bridge protocol resolution
+IMG_WIDTH, IMG_HEIGHT = 320, 240
 
 
 def quat_from_heading(heading: float):
@@ -95,7 +96,7 @@ def main():
 
         data.qpos[qadr:qadr + 7] = [x, y, 0.075, qw, qx, qy, qz]
         data.qvel[:] = 0
-        mujoco.mj_forward(model, data)  # kinematics only, no physics stepping needed
+        mujoco.mj_forward(model, data)  # kinematics only, no stepping
 
         renderer.update_scene(data, camera="cam_front")
         pixels = renderer.render()

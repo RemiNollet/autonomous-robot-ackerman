@@ -12,17 +12,22 @@ Mac-only step — see render_dataset_images.py. Splitting the two means
 a labeling bug and a rendering bug can never be confused with each other.
 """
 
+import csv
+import math
 import os
 import sys
-import math
-import csv
+
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-from perception.dataset.track_definitions import REFERENCE_TRACK, LANE_HALF_WIDTH
-from perception.dataset.geometry import compute_lane_state
-from perception.dataset.camera_visibility import lane_is_visible, any_lane_visible
+from perception.dataset.track_definitions import (  # noqa: E402
+    REFERENCE_TRACK, LANE_HALF_WIDTH,
+)
+from perception.dataset.geometry import compute_lane_state  # noqa: E402
+from perception.dataset.camera_visibility import (  # noqa: E402
+    lane_is_visible, any_lane_visible,
+)
 
 N_TOTAL = 2000
 NEGATIVE_FRACTION = 0.10
@@ -101,15 +106,18 @@ def sample_pose(rng: np.random.Generator, negative: bool):
     for _ in range(MAX_REJECTION_ATTEMPTS):
         x, y, heading = _raw_sample(rng, negative)
         if not negative:
-            if lane_is_visible(REFERENCE_TRACK, x, y, heading, LANE_HALF_WIDTH):
+            if lane_is_visible(
+                    REFERENCE_TRACK, x, y, heading, LANE_HALF_WIDTH):
                 return x, y, heading, 1.0
         else:
-            if not any_lane_visible(REFERENCE_TRACK, x, y, heading, LANE_HALF_WIDTH):
+            if not any_lane_visible(
+                    REFERENCE_TRACK, x, y, heading, LANE_HALF_WIDTH):
                 return x, y, heading, 0.0
     raise RuntimeError(
         f"rejection sampling failed after {MAX_REJECTION_ATTEMPTS} attempts "
         f"(negative={negative}). The envelope and the visibility criterion "
-        f"are inconsistent — do not silently fall back to an unfiltered sample."
+        f"are inconsistent -- do not silently fall back to an unfiltered "
+        f"sample."
     )
 
 
@@ -238,5 +246,5 @@ if __name__ == "__main__":
         print(f"  {split}: {sum(1 for r in rows if r['split'] == split)}")
     n_pos_curv = sum(1 for r in rows if r["valid"] and r["curvature"] > 1e-6)
     n_neg_curv = sum(1 for r in rows if r["valid"] and r["curvature"] < -1e-6)
-    print(f"  curvature: {n_pos_curv} left-turning, {n_neg_curv} right-turning "
-          f"(valid samples)")
+    print(f"  curvature: {n_pos_curv} left-turning, "
+          f"{n_neg_curv} right-turning (valid samples)")

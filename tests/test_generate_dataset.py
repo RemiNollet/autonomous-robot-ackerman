@@ -3,22 +3,27 @@ Tests for perception/dataset/generate_dataset.py — the label-generation
 core only (no MuJoCo/rendering dependency).
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from perception.dataset.generate_dataset import (
-    generate_labels, POS_LATERAL_RANGE, POS_HEADING_RANGE, zone_for_s,
+from perception.dataset.camera_visibility import (  # noqa: E402
+    any_lane_visible, lane_is_visible,
 )
-from perception.dataset.track_definitions import REFERENCE_TRACK, LANE_HALF_WIDTH
-from perception.dataset.camera_visibility import lane_is_visible, any_lane_visible
+from perception.dataset.generate_dataset import (  # noqa: E402
+    POS_HEADING_RANGE, POS_LATERAL_RANGE, generate_labels, zone_for_s,
+)
+from perception.dataset.track_definitions import (  # noqa: E402
+    LANE_HALF_WIDTH, REFERENCE_TRACK,
+)
 
 
 def test_generation_is_deterministic():
     a = generate_labels(seed=123, n_total=200)
     b = generate_labels(seed=123, n_total=200)
-    assert a == b, "same seed must produce identical dataset (NFR-3 reproducibility)"
+    assert a == b, (
+        "same seed must produce identical dataset (NFR-3 reproducibility)")
 
 
 def test_positive_negative_split_matches_config():
@@ -134,7 +139,8 @@ def test_every_curvature_bin_present_in_every_split():
     rows = generate_labels(seed=1, n_total=2000)
     curvature_bins = {0.0, round(1 / 5, 3), round(1 / 3, 3)}
     for split in ("train", "val", "test"):
-        got = {round(abs(r["curvature"]), 3) for r in rows if r["split"] == split}
+        got = {round(abs(r["curvature"]), 3)
+               for r in rows if r["split"] == split}
         assert got == curvature_bins, (
             f"split {split!r} missing curvature bin(s): {curvature_bins - got}"
         )
@@ -172,7 +178,8 @@ def test_mirror_row_negates_lane_state_and_preserves_everything_else():
     assert len(base) == len(mirrors) == 200
 
     for name, src in base.items():
-        m = mirrors[f"{os.path.splitext(name)[0]}_mirror{os.path.splitext(name)[1]}"]
+        stem, ext = os.path.splitext(name)
+        m = mirrors[f"{stem}_mirror{ext}"]
         assert m["source_filename"] == name
         assert m["lateral_error"] == -src["lateral_error"]
         assert m["heading_error"] == -src["heading_error"]
@@ -181,7 +188,8 @@ def test_mirror_row_negates_lane_state_and_preserves_everything_else():
         # split -- a mirror is never allowed to land in a different split
         # than its own source (that would be leakage introduced by the
         # augmentation itself, defeating ADR-9).
-        assert m["x"] == src["x"] and m["y"] == src["y"] and m["heading"] == src["heading"]
+        assert (m["x"] == src["x"] and m["y"] == src["y"]
+                and m["heading"] == src["heading"])
         assert m["s"] == src["s"]
         assert m["confidence"] == src["confidence"]
         assert m["valid"] == src["valid"]

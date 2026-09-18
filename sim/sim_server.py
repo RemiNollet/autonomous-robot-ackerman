@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Serveur de simulation MuJoCo -- tourne sur macOS.
+"""MuJoCo simulation server -- runs on macOS.
 
-Joue le role du "plant" (le robot). Il n'y a AUCUNE intelligence ici :
-il expose des capteurs et accepte des commandes actionneur, exactement
-comme le fera le Raspberry Pi + chassis reel en Coree.
+Plays the role of the "plant" (the robot). There is NO intelligence
+here: it exposes sensors and accepts actuator commands, exactly like
+the Raspberry Pi + real chassis eventually will.
 
     python3 sim/sim_server.py --bind 0.0.0.0
 """
@@ -27,9 +27,9 @@ import mujoco.viewer as mj_viewer
 # frames in one updating window without adding cv2 as a new dependency.
 import matplotlib.pyplot as plt
 
-WHEELBASE = 0.26   # empattement [m]
-TRACK = 0.21       # voie [m]
-MAX_TORQUE = 2.0   # couple moteur max [N.m]
+WHEELBASE = 0.26   # wheelbase [m]
+TRACK = 0.21       # track width [m]
+MAX_TORQUE = 2.0   # max drive-motor torque [N.m]
 
 # Anchored to this file's own location, not the CWD -- the docstring's
 # usage example assumes `cd sim && python3 sim_server.py`, but nothing
@@ -41,7 +41,7 @@ DEFAULT_MODEL = os.path.join(
 
 
 def ackermann(delta):
-    """Angle de braquage bicyclette -> angles roue gauche / droite."""
+    """Bicycle-model steering angle -> (left, right) wheel angles."""
     if abs(delta) < 1e-4:
         return delta, delta
     R = WHEELBASE / math.tan(delta)
@@ -66,14 +66,16 @@ def main():
     ap.add_argument("--height", type=int, default=240)
     ap.add_argument("--no-camera", action="store_true")
     ap.add_argument("--realtime", action="store_true", default=True)
-    ap.add_argument("--view", action="store_true",
-                     help="open a live MuJoCo passive viewer window, for a "
-                          "demo/recording -- not for any automated test path")
-    ap.add_argument("--view-camera", action="store_true",
-                     help="open a second, separate window showing the front "
-                          "camera frame at its natural capture rate -- works "
-                          "alongside --view or standalone. Demo/recording "
-                          "only, not for any automated test path")
+    ap.add_argument(
+        "--view", action="store_true",
+        help="open a live MuJoCo passive viewer window, for a "
+             "demo/recording -- not for any automated test path")
+    ap.add_argument(
+        "--view-camera", action="store_true",
+        help="open a second, separate window showing the front "
+             "camera frame at its natural capture rate -- works "
+             "alongside --view or standalone. Demo/recording "
+             "only, not for any automated test path")
     args = ap.parse_args()
     if args.view_camera and args.no_camera:
         ap.error("--view-camera needs the camera enabled (drop --no-camera)")
@@ -105,6 +107,26 @@ def main():
     viewer = None
     if args.view:
         viewer = mj_viewer.launch_passive(model, data)
+        # Chase camera, not the default free/static view -- bundled into
+        # --view rather than a separate --follow flag: --view only ever
+        # exists for a demo/recording (never an automated test path, same
+        # constraint as the flag itself), and there's no case where the
+        # static default beats being able to actually see the car drive.
+        # trackbodyid follows the chassis's POSITION only -- MuJoCo's
+        # mjCAMERA_TRACKING keeps azimuth/elevation/distance fixed in the
+        # WORLD frame, it doesn't turn the camera to stay behind the
+        # vehicle through corners (verified: rendering the same params at a
+        # 90deg-turned pose shows the car from the side, not from behind,
+        # though still clearly in frame). A real heading-following chase
+        # cam would need per-frame azimuth updates from the chassis yaw --
+        # not worth it for a demo. distance/elevation/azimuth chosen by
+        # rendering this exact camera at several track poses and looking at
+        # the output (see chase_*.png), not guessed.
+        viewer.cam.trackbodyid = model.body("chassis").id
+        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        viewer.cam.distance = 2.5
+        viewer.cam.elevation = -20
+        viewer.cam.azimuth = 90
 
     cam_fig = cam_im = None
     if args.view_camera:
@@ -116,7 +138,8 @@ def main():
         # demo feature.
         plt.ion()
         cam_fig, cam_ax = plt.subplots(num="carsim front camera")
-        cam_im = cam_ax.imshow(np.zeros((args.height, args.width, 3), dtype=np.uint8))
+        blank = np.zeros((args.height, args.width, 3), dtype=np.uint8)
+        cam_im = cam_ax.imshow(blank)
         cam_ax.axis("off")
         cam_fig.tight_layout()
         cam_fig.canvas.draw()
@@ -124,7 +147,7 @@ def main():
 
     ctx = zmq.Context()
     pub = ctx.socket(zmq.PUB)
-    pub.setsockopt(zmq.SNDHWM, 2)          # on jette les vieilles trames
+    pub.setsockopt(zmq.SNDHWM, 2)          # drop old frames, don't queue
     pub.bind(f"tcp://{args.bind}:{args.state_port}")
 
     sub = ctx.socket(zmq.SUB)
@@ -134,23 +157,22 @@ def main():
 
     dt_ctrl = 1.0 / args.ctrl_hz
     n_sub = max(1, round(dt_ctrl / model.opt.timestep))
-    # Le rendu ne peut se produire qu'a un tick de controle : on force un
-    # diviseur entier, sinon le debit derive (30 Hz demandes -> 25 Hz reels).
+    # Rendering can only happen on a control tick -- force an integer
+    # divisor, or the achieved rate drifts (30 Hz requested -> 25 Hz real).
     cam_every = max(1, round(args.ctrl_hz / args.cam_hz))
     cam_hz_real = args.ctrl_hz / cam_every
 
-    print(f"[sim] etat   PUB tcp://{args.bind}:{args.state_port}")
+    print(f"[sim] state  PUB tcp://{args.bind}:{args.state_port}")
     print(f"[sim] cmd    SUB tcp://{args.bind}:{args.cmd_port}")
     if args.no_camera:
         cam_status = "off"
     else:
-        cam_status = f"{cam_hz_real:.1f} Hz reels (1 tick sur {cam_every})"
+        cam_status = f"{cam_hz_real:.1f} Hz real (1 tick in {cam_every})"
     print(f"[sim] ctrl {args.ctrl_hz:.0f} Hz | cam {cam_status}")
 
     seq = 0
     steer_cmd = 0.0
     accel_cmd = 0.0
-    cmd_seq = -1
     tick = 0
     t_wall0 = time.time()
     stats_t = time.time()
@@ -159,7 +181,7 @@ def main():
 
     try:
         while True:
-            # --- commandes : on vide la file, on ne garde que la derniere ---
+            # Drain the command queue, keep only the latest.
             while True:
                 try:
                     frames = sub.recv_multipart(zmq.NOBLOCK)
@@ -168,14 +190,13 @@ def main():
                 c = P.decode_cmd(frames)
                 steer_cmd = float(np.clip(c["steer"], -0.6, 0.6))
                 accel_cmd = float(np.clip(c["accel"], -1.0, 1.0))
-                cmd_seq = c["seq"]
-                # Latence apparente ros -> sim. Combinee a la mesure
-                # inverse cote pont, elle permet de separer le vrai
-                # temps de transit du decalage d'horloge (cf. README).
+                # Apparent ros -> sim latency. Combined with the bridge's
+                # own reverse-direction measurement, this separates real
+                # transit time from clock skew (see README).
                 lat_cmd_sum += (P.now() - c["t_pub"]) * 1e3
                 n_cmd += 1
 
-            # --- actionneurs ---
+            # --- actuators ---
             dl, dr = ackermann(steer_cmd)
             torque = accel_cmd * MAX_TORQUE
             data.ctrl[0] = dl
@@ -183,7 +204,7 @@ def main():
             data.ctrl[2] = torque
             data.ctrl[3] = torque
 
-            # --- physique ---
+            # --- physics ---
             for _ in range(n_sub):
                 mujoco.mj_step(model, data)
 
@@ -192,7 +213,7 @@ def main():
                 if not viewer.is_running():
                     break
 
-            # --- capteurs ---
+            # --- sensors ---
             pos = data.body("chassis").xpos
             quat = data.body("chassis").xquat
             vel = data.sensor("s_vel").data
@@ -219,7 +240,8 @@ def main():
                     else:
                         cam_im = None
 
-            pub.send_multipart(P.encode_state(seq, data.time, pose, twist, img))
+            pub.send_multipart(
+                P.encode_state(seq, data.time, pose, twist, img))
             seq += 1
 
             if time.time() - stats_t > 2.0:
@@ -238,7 +260,7 @@ def main():
                 if lag > 0:
                     time.sleep(lag)
     except KeyboardInterrupt:
-        print("\n[sim] arret")
+        print("\n[sim] stopped")
     finally:
         if viewer is not None:
             viewer.close()

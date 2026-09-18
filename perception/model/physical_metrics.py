@@ -1,20 +1,19 @@
-"""
-Test-set error in physical units, with the two things a bare MAE table
-hides: tail behaviour (a controller cares about p95/max, not the mean) and
-per-curvature-bin breakdown (an aggregate can average away a specific
-geometry the model is bad at).
+"""Test-set error in physical units, with the two things a bare MAE
+table hides: tail behaviour (a controller cares about p95/max, not the
+mean) and per-curvature-bin breakdown (an aggregate can average away a
+specific geometry the model is bad at).
 
 kappa is deliberately absent from this module's own per-sample/per-bin
-computation. Historically (ADR-14) its loss weight was 0 and the head was
-untrained, so any statistic here would describe initialization drift, not
-model performance -- format_physical_report's default disclaimer covers
-that case. When kappa IS trained (ADR-18, windowed-relabeled curvature),
-its meaningful evaluation is near-join vs away-from-join MAE, which needs
-distance-to-the-next-transition -- not something this generic per-sample
-evaluator has access to -- so that comparison lives in
-perception/model/analyze_adr18_retrain.py instead; format_physical_report
-takes an explicit kappa_note to point there rather than printing a stale
-"not reported" claim.
+computation. Historically (ADR-14) its loss weight was 0 and the head
+was untrained, so any statistic here would describe initialization
+drift, not model performance -- format_physical_report's default
+disclaimer covers that case. When kappa IS trained (ADR-18,
+windowed-relabeled curvature), its meaningful evaluation is near-join
+vs away-from-join MAE, which needs distance-to-the-next-transition --
+not something this generic per-sample evaluator has access to -- so
+that comparison lives in perception/model/analyze_adr18_retrain.py
+instead; format_physical_report takes an explicit kappa_note to point
+there rather than printing a stale "not reported" claim.
 """
 
 import numpy as np
@@ -32,7 +31,7 @@ def _bin_label(kappa_true_physical: float):
     for label, m in CURVATURE_BINS:
         if abs(mag - m) < CURVATURE_BIN_TOL:
             return label
-    return None  # shouldn't happen on v0 -- see docs/decisions.md ADR-11 finding 4
+    return None  # shouldn't happen on v0 (docs/decisions.md ADR-11-4)
 
 
 def _stats(errs) -> dict:
@@ -50,20 +49,24 @@ def _stats(errs) -> dict:
 
 
 @torch.no_grad()
-def physical_metrics(model: torch.nn.Module, loader: DataLoader, device: torch.device,
-                      confidence_threshold: float = 0.5) -> dict:
+def physical_metrics(
+        model: torch.nn.Module, loader: DataLoader, device: torch.device,
+        confidence_threshold: float = 0.5) -> dict:
     """Runs inference over `loader` once. Returns:
-      e_y, e_psi:        {mae, rmse, p50, p95, max, n} in physical units (m, rad),
-                          valid samples only (an invalid sample's lateral_error/
-                          heading_error describe a pose never meant to be
-                          tracked -- same masking as the training loss).
+      e_y, e_psi:        {mae, rmse, p50, p95, max, n} in physical units
+                          (m, rad), valid samples only (an invalid
+                          sample's lateral_error/heading_error describe
+                          a pose never meant to be tracked -- same
+                          masking as the training loss).
       e_y_by_bin,
-      e_psi_by_bin:       the same stats, split by the TRUE curvature bin
-                          (from the label, not the untrained kappa head).
-      confidence:         {accuracy, valid_recall, invalid_recall, n_valid,
-                          n_invalid} -- accuracy alone hides class imbalance
-                          (90/10 valid/invalid on v0), so both per-class
-                          recalls are reported alongside it.
+      e_psi_by_bin:       the same stats, split by the TRUE curvature
+                          bin (from the label, not the untrained kappa
+                          head).
+      confidence:         {accuracy, valid_recall, invalid_recall,
+                          n_valid, n_invalid} -- accuracy alone hides
+                          class imbalance (90/10 valid/invalid on v0),
+                          so both per-class recalls are reported
+                          alongside it.
     """
     model.eval()
     e_y_errs, e_psi_errs = [], []
@@ -72,7 +75,9 @@ def physical_metrics(model: torch.nn.Module, loader: DataLoader, device: torch.d
     conf_true_all, conf_pred_all = [], []
 
     for img, target, valid in loader:
-        img, target, valid = img.to(device), target.to(device), valid.to(device)
+        img = img.to(device)
+        target = target.to(device)
+        valid = valid.to(device)
         pred, _ = model(img)
 
         e_y_pred = (pred[:, 0] * E_Y_SCALE).cpu().numpy()
@@ -82,7 +87,9 @@ def physical_metrics(model: torch.nn.Module, loader: DataLoader, device: torch.d
         kappa_true = (target[:, 2] * KAPPA_SCALE).cpu().numpy()
         v = valid.cpu().numpy().astype(bool)
 
-        conf_pred = (torch.sigmoid(pred[:, 3]) >= confidence_threshold).cpu().numpy()
+        conf_pred = (
+            torch.sigmoid(pred[:, 3]) >= confidence_threshold
+        ).cpu().numpy()
         conf_true_all.extend(v.tolist())
         conf_pred_all.extend(conf_pred.tolist())
 
@@ -100,10 +107,20 @@ def physical_metrics(model: torch.nn.Module, loader: DataLoader, device: torch.d
 
     conf_true_arr = np.array(conf_true_all, dtype=bool)
     conf_pred_arr = np.array(conf_pred_all, dtype=bool)
-    n_valid, n_invalid = int(conf_true_arr.sum()), int((~conf_true_arr).sum())
-    accuracy = float((conf_true_arr == conf_pred_arr).mean()) if len(conf_true_arr) else float("nan")
-    valid_recall = float(conf_pred_arr[conf_true_arr].mean()) if n_valid else float("nan")
-    invalid_recall = float((~conf_pred_arr[~conf_true_arr]).mean()) if n_invalid else float("nan")
+    n_valid = int(conf_true_arr.sum())
+    n_invalid = int((~conf_true_arr).sum())
+    if len(conf_true_arr):
+        accuracy = float((conf_true_arr == conf_pred_arr).mean())
+    else:
+        accuracy = float("nan")
+    if n_valid:
+        valid_recall = float(conf_pred_arr[conf_true_arr].mean())
+    else:
+        valid_recall = float("nan")
+    if n_invalid:
+        invalid_recall = float((~conf_pred_arr[~conf_true_arr]).mean())
+    else:
+        invalid_recall = float("nan")
 
     return {
         "e_y": _stats(e_y_errs),
@@ -111,84 +128,114 @@ def physical_metrics(model: torch.nn.Module, loader: DataLoader, device: torch.d
         "e_y_by_bin": {k: _stats(v) for k, v in bin_e_y.items()},
         "e_psi_by_bin": {k: _stats(v) for k, v in bin_e_psi.items()},
         "confidence": {
-            "accuracy": accuracy, "valid_recall": valid_recall, "invalid_recall": invalid_recall,
+            "accuracy": accuracy, "valid_recall": valid_recall,
+            "invalid_recall": invalid_recall,
             "n_valid": n_valid, "n_invalid": n_invalid,
         },
     }
 
 
-def format_physical_report(metrics: dict, title: str, in_distribution: bool,
-                            lane_half_width: float, heading_envelope: float,
-                            kappa_note: str = None) -> str:
-    """Markdown. `in_distribution` controls the framing sentence -- True for
-    the usual test split (per docs/decisions.md ADR-11 finding 5, this is
-    interpolation on track geometry the model has effectively memorised,
-    not generalisation), False for the mirror-generalisation probe (the
-    only v0 evaluation that isn't).
+def format_physical_report(
+        metrics: dict, title: str, in_distribution: bool,
+        lane_half_width: float, heading_envelope: float,
+        kappa_note: str = None) -> str:
+    """Markdown. `in_distribution` controls the framing sentence -- True
+    for the usual test split (per docs/decisions.md ADR-11 finding 5,
+    this is interpolation on track geometry the model has effectively
+    memorised, not generalisation), False for the mirror-generalisation
+    probe (the only v0 evaluation that isn't).
 
-    kappa_note: markdown text to print in place of the default "kappa not
-    reported, loss weight 0" disclaimer -- pass this whenever kappa's loss
-    weight for the run being reported is NOT 0 (the module docstring's
-    "when kappa IS trained" case), so this function never asserts kappa is
-    untrained for a run where it wasn't."""
-    e_y, e_psi, conf = metrics["e_y"], metrics["e_psi"], metrics["confidence"]
+    kappa_note: markdown text to print in place of the default "kappa
+    not reported, loss weight 0" disclaimer -- pass this whenever
+    kappa's loss weight for the run being reported is NOT 0 (the module
+    docstring's "when kappa IS trained" case), so this function never
+    asserts kappa is untrained for a run where it wasn't."""
+    e_y, e_psi = metrics["e_y"], metrics["e_psi"]
+    conf = metrics["confidence"]
     lines = [f"### {title}\n"]
 
     if in_distribution:
         lines.append(
-            "**In-distribution error, not a generalisation measurement.** Per ADR-11 finding 5, "
-            "no partition of v0 measures generalisation -- every arc is geometrically identical to "
-            "its twins under identical lighting and texture. These are upper bounds on a track the "
-            "model has effectively memorised, reported because they're still the honest description "
-            "of what was measured, not because they say whether the model can drive on a track it "
-            "hasn't seen.\n"
+            "**In-distribution error, not a generalisation "
+            "measurement.** Per ADR-11 finding 5, no partition of v0 "
+            "measures generalisation -- every arc is geometrically "
+            "identical to its twins under identical lighting and "
+            "texture. These are upper bounds on a track the model has "
+            "effectively memorised, reported because they're still the "
+            "honest description of what was measured, not because they "
+            "say whether the model can drive on a track it hasn't "
+            "seen.\n"
         )
     else:
         lines.append(
-            "**The one v0 number that is not pure interpolation.** Trained on source (non-mirrored) "
-            "renders only, evaluated on their never-seen mirror twins (right turns from a track that "
-            "only physically contains left turns, ADR-10) -- geometrically distinct enough from "
-            "training that this measures something closer to generalisation than the in-distribution "
-            "table above does.\n"
+            "**The one v0 number that is not pure interpolation.** "
+            "Trained on source (non-mirrored) renders only, evaluated "
+            "on their never-seen mirror twins (right turns from a "
+            "track that only physically contains left turns, ADR-10) "
+            "-- geometrically distinct enough from training that this "
+            "measures something closer to generalisation than the "
+            "in-distribution table above does.\n"
         )
 
     lines.append(
         f"| Output | Units | MAE | RMSE | p50 | p95 | max | n |\n"
         f"|---|---|---|---|---|---|---|---|\n"
-        f"| e_y | m | {e_y['mae']:.4f} | {e_y['rmse']:.4f} | {e_y['p50']:.4f} | "
-        f"{e_y['p95']:.4f} | {e_y['max']:.4f} | {e_y['n']} |\n"
-        f"| e_psi | rad | {e_psi['mae']:.4f} | {e_psi['rmse']:.4f} | {e_psi['p50']:.4f} | "
-        f"{e_psi['p95']:.4f} | {e_psi['max']:.4f} | {e_psi['n']} |\n"
-        f"| e_psi | deg | {np.degrees(e_psi['mae']):.2f} | {np.degrees(e_psi['rmse']):.2f} | "
-        f"{np.degrees(e_psi['p50']):.2f} | {np.degrees(e_psi['p95']):.2f} | "
+        f"| e_y | m | {e_y['mae']:.4f} | {e_y['rmse']:.4f} | "
+        f"{e_y['p50']:.4f} | {e_y['p95']:.4f} | {e_y['max']:.4f} | "
+        f"{e_y['n']} |\n"
+        f"| e_psi | rad | {e_psi['mae']:.4f} | {e_psi['rmse']:.4f} | "
+        f"{e_psi['p50']:.4f} | {e_psi['p95']:.4f} | {e_psi['max']:.4f} | "
+        f"{e_psi['n']} |\n"
+        f"| e_psi | deg | {np.degrees(e_psi['mae']):.2f} | "
+        f"{np.degrees(e_psi['rmse']):.2f} | "
+        f"{np.degrees(e_psi['p50']):.2f} | "
+        f"{np.degrees(e_psi['p95']):.2f} | "
         f"{np.degrees(e_psi['max']):.2f} | {e_psi['n']} |\n"
     )
+    e_y_pct_mae = e_y['mae'] / lane_half_width * 100
+    e_y_pct_p95 = e_y['p95'] / lane_half_width * 100
+    e_psi_pct_mae = (
+        np.degrees(e_psi['mae']) / np.degrees(heading_envelope) * 100)
+    e_psi_pct_p95 = (
+        np.degrees(e_psi['p95']) / np.degrees(heading_envelope) * 100)
     lines.append(
-        f"\ne_y MAE is {e_y['mae']/lane_half_width*100:.1f}% of the lane half-width "
-        f"({lane_half_width} m); p95 is {e_y['p95']/lane_half_width*100:.1f}%. "
-        f"e_psi MAE is {np.degrees(e_psi['mae'])/np.degrees(heading_envelope)*100:.1f}% of the "
-        f"sampling envelope (+/-{heading_envelope} rad = +/-{np.degrees(heading_envelope):.1f} deg); "
-        f"p95 is {np.degrees(e_psi['p95'])/np.degrees(heading_envelope)*100:.1f}%.\n"
+        f"\ne_y MAE is {e_y_pct_mae:.1f}% of the lane half-width "
+        f"({lane_half_width} m); p95 is {e_y_pct_p95:.1f}%. "
+        f"e_psi MAE is {e_psi_pct_mae:.1f}% of the sampling envelope "
+        f"(+/-{heading_envelope} rad = "
+        f"+/-{np.degrees(heading_envelope):.1f} deg); "
+        f"p95 is {e_psi_pct_p95:.1f}%.\n"
     )
 
     lines.append(
-        f"\nConfidence: accuracy {conf['accuracy']:.3f} over n_valid={conf['n_valid']}, "
-        f"n_invalid={conf['n_invalid']} (imbalanced ~90/10 -- accuracy alone hides class "
-        f"performance). Per-class: valid recall {conf['valid_recall']:.3f}, "
+        f"\nConfidence: accuracy {conf['accuracy']:.3f} over "
+        f"n_valid={conf['n_valid']}, n_invalid={conf['n_invalid']} "
+        f"(imbalanced ~90/10 -- accuracy alone hides class "
+        f"performance). Per-class: valid recall "
+        f"{conf['valid_recall']:.3f}, "
         f"invalid recall {conf['invalid_recall']:.3f}.\n"
     )
 
-    lines.append("\n" + (kappa_note if kappa_note is not None else
-                  "**kappa: not reported.** Loss weight is 0 (ADR-14) -- the head is untrained, "
-                  "so any number here would describe initialization drift, not model performance.\n"))
+    if kappa_note is not None:
+        lines.append("\n" + kappa_note)
+    else:
+        lines.append(
+            "\n**kappa: not reported.** Loss weight is 0 (ADR-14) -- "
+            "the head is untrained, so any number here would describe "
+            "initialization drift, not model performance.\n")
 
-    lines.append("\n| Curvature bin | e_y MAE (m) | e_y p95 (m) | e_psi MAE (deg) | e_psi p95 (deg) | n |\n"
-                  "|---|---|---|---|---|---|\n")
+    lines.append(
+        "\n| Curvature bin | e_y MAE (m) | e_y p95 (m) | "
+        "e_psi MAE (deg) | e_psi p95 (deg) | n |\n"
+        "|---|---|---|---|---|---|\n")
     for label, _ in CURVATURE_BINS:
-        eyb, epb = metrics["e_y_by_bin"][label], metrics["e_psi_by_bin"][label]
+        eyb = metrics["e_y_by_bin"][label]
+        epb = metrics["e_psi_by_bin"][label]
         if eyb["n"] == 0:
             continue
-        lines.append(f"| {label} | {eyb['mae']:.4f} | {eyb['p95']:.4f} | "
-                      f"{np.degrees(epb['mae']):.2f} | {np.degrees(epb['p95']):.2f} | {eyb['n']} |\n")
+        lines.append(
+            f"| {label} | {eyb['mae']:.4f} | {eyb['p95']:.4f} | "
+            f"{np.degrees(epb['mae']):.2f} | "
+            f"{np.degrees(epb['p95']):.2f} | {eyb['n']} |\n")
 
     return "".join(lines)

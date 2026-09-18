@@ -66,10 +66,10 @@ WINDOW_FAR_M = 2.42
 DEFAULT_N_SAMPLES = 60
 
 
-def windowed_lane_state(track: Track, vehicle_x: float, vehicle_y: float,
-                         vehicle_heading: float,
-                         d_near: float = WINDOW_NEAR_M, d_far: float = WINDOW_FAR_M,
-                         n_samples: int = DEFAULT_N_SAMPLES):
+def windowed_lane_state(
+        track: Track, vehicle_x: float, vehicle_y: float,
+        vehicle_heading: float, d_near: float = WINDOW_NEAR_M,
+        d_far: float = WINDOW_FAR_M, n_samples: int = DEFAULT_N_SAMPLES):
     """Fit y(x) = c0 + c1 x + c2 x^2 to the true centerline in the vehicle
     frame, sampled at n_samples points evenly spaced in arc length over
     [d_near, d_far] m ahead of the vehicle's projection onto the track.
@@ -108,9 +108,10 @@ def windowed_lane_state(track: Track, vehicle_x: float, vehicle_y: float,
     return lateral_error, heading_error, curvature
 
 
-def windowed_curvature_average(track: Track, vehicle_x: float, vehicle_y: float,
-                                d_near: float = WINDOW_NEAR_M, d_far: float = WINDOW_FAR_M,
-                                n_samples: int = DEFAULT_N_SAMPLES, weight_fn=None):
+def windowed_curvature_average(
+        track: Track, vehicle_x: float, vehicle_y: float,
+        d_near: float = WINDOW_NEAR_M, d_far: float = WINDOW_FAR_M,
+        n_samples: int = DEFAULT_N_SAMPLES, weight_fn=None):
     """kappa_representative = a weighted average of track.curvature_at(s)
     over the arc-length actually visible in [d_near, d_far] m ahead of the
     vehicle's projection onto the track.

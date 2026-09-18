@@ -1,36 +1,41 @@
-"""
-Generates the MJCF track scene from a Track object (track_definitions.py).
+"""Generates the MJCF track scene from a Track object
+(track_definitions.py).
 
-This is the load-bearing design choice for FR-4: the visual scene and the
-ground-truth labels come from the SAME parametric Track, not two separately
-authored versions that could drift apart. If you ever change the track
-layout, change track_definitions.py and regenerate — never hand-edit the
-output XML's marking geometry directly.
+This is the load-bearing design choice for FR-4: the visual scene and
+the ground-truth labels come from the SAME parametric Track, not two
+separately authored versions that could drift apart. If you ever
+change the track layout, change track_definitions.py and regenerate --
+never hand-edit the output XML's marking geometry directly.
 
-Lane boundaries are rendered as a sequence of connected thin box segments
-following the centerline offset by +/- LANE_HALF_WIDTH along the local
-normal, sampled at fixed arc-length intervals. This approximates a curve
-with straight sub-segments, which is standard practice in MJCF since there
-is no native curved-strip primitive.
+Lane boundaries are rendered as a sequence of connected thin box
+segments following the centerline offset by +/- LANE_HALF_WIDTH along
+the local normal, sampled at fixed arc-length intervals. This
+approximates a curve with straight sub-segments, standard practice in
+MJCF since there is no native curved-strip primitive.
 """
-import sys
 import math
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
-from perception.dataset.geometry import Track, wrap_to_pi
 
-SAMPLE_SPACING = 0.2   # m, spacing between polyline samples along each boundary
-MARK_HEIGHT = 0.02      # m, thickness of the marking strip
-MARK_WIDTH = 0.05       # m, width of the marking strip
-ROAD_MARGIN = 3.0       # m, ground plane padding beyond the track's bounding box
+from perception.dataset.geometry import Track  # noqa: E402
+from perception.dataset.track_definitions import (  # noqa: E402
+    REFERENCE_TRACK, LANE_HALF_WIDTH,
+)
+
+SAMPLE_SPACING = 0.2  # m, spacing between polyline samples per boundary
+MARK_HEIGHT = 0.02    # m, thickness of the marking strip
+MARK_WIDTH = 0.05     # m, width of the marking strip
+ROAD_MARGIN = 3.0     # m, ground plane padding beyond the track's bounds
 
 
 def _left_normal(heading: float):
     return (-math.sin(heading), math.cos(heading))
 
 
-def _sample_boundary(track: Track, side: float, half_width: float, spacing: float):
+def _sample_boundary(
+        track: Track, side: float, half_width: float, spacing: float):
     """side = +1.0 for left boundary, -1.0 for right boundary."""
     n = max(2, int(track.total_length / spacing))
     points = []
@@ -39,7 +44,8 @@ def _sample_boundary(track: Track, side: float, half_width: float, spacing: floa
         cx, cy = track.point_at(s)
         h = track.heading_at(min(s, track.total_length - 1e-6))
         nx, ny = _left_normal(h)
-        points.append((cx + side * half_width * nx, cy + side * half_width * ny, h))
+        points.append(
+            (cx + side * half_width * nx, cy + side * half_width * ny, h))
     return points
 
 
@@ -54,8 +60,8 @@ def _segment_geoms(points, name_prefix: str) -> str:
         if length < 1e-6:
             continue
         heading = math.atan2(y1 - y0, x1 - x0)
-        # MuJoCo box geoms take half-extents as size, and orientation as a quaternion
-        # about z for a heading rotation.
+        # MuJoCo box geoms take half-extents as size, and orientation as
+        # a quaternion about z for a heading rotation.
         qw = math.cos(heading / 2.0)
         qz = math.sin(heading / 2.0)
         geoms.append(
@@ -76,7 +82,9 @@ def _track_bounds(track: Track, margin: float):
         x, y = track.point_at(s)
         xs.append(x)
         ys.append(y)
-    return (min(xs) - margin, max(xs) + margin, min(ys) - margin, max(ys) + margin)
+    return (
+        min(xs) - margin, max(xs) + margin,
+        min(ys) - margin, max(ys) + margin)
 
 
 def generate_lane_marking_geoms(track: Track, lane_half_width: float) -> str:
@@ -117,6 +125,5 @@ def generate_track_mjcf(track: Track, lane_half_width: float) -> str:
 
 
 if __name__ == "__main__":
-    from perception.dataset.track_definitions import REFERENCE_TRACK, LANE_HALF_WIDTH
     xml = generate_track_mjcf(REFERENCE_TRACK, LANE_HALF_WIDTH)
     print(xml)

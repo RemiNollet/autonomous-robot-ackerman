@@ -28,14 +28,16 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from perception.dataset.geometry import compute_lane_state
-from perception.dataset.track_definitions import REFERENCE_TRACK
-from perception.dataset.windowed_relabel import (
+from perception.dataset.geometry import compute_lane_state  # noqa: E402
+from perception.dataset.track_definitions import (  # noqa: E402
+    REFERENCE_TRACK,
+)
+from perception.dataset.windowed_relabel import (  # noqa: E402
     WINDOW_NEAR_M, windowed_curvature_average, windowed_lane_state,
 )
 
 TRACK = REFERENCE_TRACK
-JOIN_OFFSET_M = 0.5  # a "fixed small offset", well under the window's own 2.1 m span
+JOIN_OFFSET_M = 0.5  # fixed small offset, well under the window's 2.1 m span
 PRIMITIVE_CASES = [
     # (label, primitive_index, pose_offset). pose_offset must satisfy
     # offset + WINDOW_FAR_M < primitive.length, or the window spills into
@@ -54,7 +56,8 @@ def _pose_at_s(s):
     return x, y, heading
 
 
-@pytest.fixture(params=list(enumerate(TRACK.starts)), ids=lambda p: f"join_{p[0]}")
+@pytest.fixture(params=list(enumerate(TRACK.starts)),
+                ids=lambda p: f"join_{p[0]}")
 def join(request):
     idx, join_s = request.param
     return idx, join_s
@@ -89,15 +92,16 @@ def test_after_crossing_each_join_matches_new_primitive(join):
     recover the analytic curvature of whichever primitive now fully
     contains the window, same as the away-from-join tests below. No
     pass/fail assertion here either, for the same reason those don't
-    pass cleanly (see test_windowed_kappa_matches_pointwise_away_from_any_join) --
-    reported so the per-join pattern is visible in the ADR, not asserted
-    against a threshold already known not to hold."""
+    pass cleanly (see the "away from any join" test below) -- reported so
+    the per-join pattern is visible in the ADR, not asserted against a
+    threshold already known not to hold."""
     idx, join_s = join
     s_vehicle = (join_s + JOIN_OFFSET_M) % TRACK.total_length
     x, y, heading = _pose_at_s(s_vehicle)
 
     _, _, kappa_fit = windowed_lane_state(TRACK, x, y, heading)
-    true_kappa = TRACK.curvature_at((s_vehicle + WINDOW_NEAR_M) % TRACK.total_length)
+    true_kappa = TRACK.curvature_at(
+        (s_vehicle + WINDOW_NEAR_M) % TRACK.total_length)
 
     print(f"join {idx}, after crossing: true kappa (in new primitive) = "
           f"{true_kappa:.4f}, windowed fit kappa = {kappa_fit:.4f}, "
@@ -142,22 +146,25 @@ def test_windowed_kappa_matches_pointwise_away_from_any_join(
     _, _, kappa_windowed = windowed_lane_state(TRACK, x, y, heading)
 
     if pointwise.curvature != 0:
-        discrepancy = abs(kappa_windowed - pointwise.curvature) / abs(pointwise.curvature)
+        discrepancy = (abs(kappa_windowed - pointwise.curvature)
+                       / abs(pointwise.curvature))
     else:
         discrepancy = abs(kappa_windowed)
 
     print(f"{primitive_type}: pointwise kappa={pointwise.curvature:.4f}, "
-          f"windowed kappa={kappa_windowed:.4f}, discrepancy={discrepancy:.4f}")
+          f"windowed kappa={kappa_windowed:.4f}, "
+          f"discrepancy={discrepancy:.4f}")
 
     tolerance = 0.05  # 5% relative (absolute on the straight case) -- an
     # engineering bar for "close agreement", not derived from anything in
     # particular; the measured discrepancies are 4-8x over it regardless
     # of exactly where this number is drawn.
     assert discrepancy < tolerance, (
-        f"{primitive_type}: windowed fit kappa ({kappa_windowed:.4f}) disagrees "
-        f"with pointwise ground truth ({pointwise.curvature:.4f}) by "
-        f"{discrepancy:.1%} away from any join -- the fit itself is biased, "
-        f"not just the old point-projection label it's meant to replace.")
+        f"{primitive_type}: windowed fit kappa ({kappa_windowed:.4f}) "
+        f"disagrees with pointwise ground truth "
+        f"({pointwise.curvature:.4f}) by {discrepancy:.1%} away from any "
+        f"join -- the fit itself is biased, not just the old "
+        f"point-projection label it's meant to replace.")
 
 
 # --------------------------------------------------------------------------
@@ -166,7 +173,8 @@ def test_windowed_kappa_matches_pointwise_away_from_any_join(
 # below, not xfail: this method has no known failure mode on v0.
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("primitive_type,primitive_index,pose_offset", PRIMITIVE_CASES)
+@pytest.mark.parametrize(
+    "primitive_type,primitive_index,pose_offset", PRIMITIVE_CASES)
 def test_windowed_curvature_average_matches_pointwise_away_from_any_join(
         primitive_type, primitive_index, pose_offset):
     """Away from any join, curvature-space averaging should recover the
@@ -189,7 +197,7 @@ def test_windowed_curvature_average_matches_pointwise_away_from_any_join(
     assert kappa_avg == pytest.approx(pointwise.curvature, abs=1e-9)
 
 
-def test_windowed_curvature_average_is_bounded_by_the_two_curvatures_near_a_join(join):
+def test_windowed_curvature_average_is_bounded_near_a_join(join):
     """Near a join (window straddling the discontinuity), the average of a
     step function over an interval is always between the step's two
     values -- a property that holds by construction (it's a convex

@@ -15,14 +15,16 @@ import csv
 import os
 import sys
 
-import matplotlib
+import matplotlib  # noqa: E402
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-from perception.dataset.track_definitions import LANE_HALF_WIDTH
+from perception.dataset.track_definitions import (  # noqa: E402
+    LANE_HALF_WIDTH,
+)
 
 DATASET_DIR = "data/dataset_v0"
 LABELS_CSV = f"{DATASET_DIR}/labels.csv"
@@ -66,7 +68,8 @@ def main():
     bin_labels = [b[0] for b in CURVATURE_BINS]
     valid_rows = [r for r in rows if r["valid"]]
 
-    print(f"Loaded {len(rows)} samples ({len(valid_rows)} valid) from {LABELS_CSV}\n")
+    n_valid = len(valid_rows)
+    print(f"Loaded {len(rows)} samples ({n_valid} valid) from {LABELS_CSV}\n")
     print("Curvature bin coverage (valid samples only):")
     for label in bin_labels:
         n = sum(1 for r in valid_rows if r["bin"] == label)
@@ -76,16 +79,21 @@ def main():
 
     print("\nSplit x curvature-bin counts (valid samples only):")
     for split in ("train", "val", "test"):
-        counts = [sum(1 for r in valid_rows if r["split"] == split and r["bin"] == label)
-                  for label in bin_labels]
-        print(f"  {split:5s} " + "  ".join(f"{label}={c}" for label, c in zip(bin_labels, counts)))
+        counts = [
+            sum(1 for r in valid_rows
+                if r["split"] == split and r["bin"] == label)
+            for label in bin_labels]
+        pairs = zip(bin_labels, counts)
+        print(f"  {split:5s} " + "  ".join(f"{lb}={c}" for lb, c in pairs))
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 9))
     palette = ["tab:red", "tab:orange", "tab:blue", "tab:green", "tab:purple"]
     colors = dict(zip(bin_labels, palette))
 
     ax = axes[0, 0]
-    counts = [sum(1 for r in valid_rows if r["bin"] == label) for label in bin_labels]
+    counts = [
+        sum(1 for r in valid_rows if r["bin"] == label)
+        for label in bin_labels]
     ax.bar(bin_labels, counts, color=[colors[b] for b in bin_labels])
     ax.set_title("Valid sample count by curvature bin")
     ax.set_ylabel("count")
@@ -95,7 +103,7 @@ def main():
     for label in bin_labels:
         vals = [r["lateral_error"] for r in valid_rows if r["bin"] == label]
         ax.hist(vals, bins=30, range=(-LANE_HALF_WIDTH, LANE_HALF_WIDTH),
-                 alpha=0.55, label=label, color=colors[label])
+                alpha=0.55, label=label, color=colors[label])
     ax.axvline(-LANE_HALF_WIDTH, color="k", linestyle="--", linewidth=0.8)
     ax.axvline(LANE_HALF_WIDTH, color="k", linestyle="--", linewidth=0.8)
     ax.set_title("lateral_error by curvature bin (valid samples)")
@@ -114,8 +122,10 @@ def main():
     width = 0.25
     x = np.arange(len(bin_labels))
     for i, split in enumerate(("train", "val", "test")):
-        counts = [sum(1 for r in valid_rows if r["split"] == split and r["bin"] == label)
-                  for label in bin_labels]
+        counts = [
+            sum(1 for r in valid_rows
+                if r["split"] == split and r["bin"] == label)
+            for label in bin_labels]
         ax.bar(x + (i - 1) * width, counts, width, label=split)
     ax.set_xticks(x)
     ax.set_xticklabels(bin_labels, rotation=15)

@@ -11,21 +11,22 @@ import math
 import os
 import sys
 
-import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "carsim_bridge"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "carsim_bridge"))
 
 rclpy = pytest.importorskip("rclpy")
 pytest.importorskip("acados_template")
 pytest.importorskip("carsim_msgs.msg")
 
-from rclpy.parameter import Parameter
+from builtin_interfaces.msg import Time as TimeMsg  # noqa: E402
+from nav_msgs.msg import Odometry  # noqa: E402
 
-import carsim_bridge.mpc_node as mn
-from carsim_msgs.msg import LaneState
-from control.mpc.params import DELTA_DOT_MAX, DELTA_MAX, L
+import carsim_bridge.mpc_node as mn  # noqa: E402
+from carsim_msgs.msg import LaneState  # noqa: E402
+from control.mpc.params import DELTA_MAX, L  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -35,8 +36,9 @@ def ros_context():
     rclpy.try_shutdown()
 
 
-def _make_lane_state(lateral_error=0.0, heading_error=0.0, curvature=0.0,
-                      confidence=1.0, valid=True, sec=0, nanosec=0):
+def _make_lane_state(
+        lateral_error=0.0, heading_error=0.0, curvature=0.0,
+        confidence=1.0, valid=True, sec=0, nanosec=0):
     msg = LaneState()
     msg.header.stamp.sec = sec
     msg.header.stamp.nanosec = nanosec
@@ -71,7 +73,8 @@ def test_publishes_plausible_cmd_from_fixed_lane_state():
         published = []
         node.pub_cmd.publish = published.append
 
-        msg = _make_lane_state(lateral_error=0.05, heading_error=0.02, curvature=0.0)
+        msg = _make_lane_state(
+            lateral_error=0.05, heading_error=0.02, curvature=0.0)
         node.on_lane_state(msg)
 
         assert len(published) == 1
@@ -92,7 +95,8 @@ def test_zero_error_zero_curvature_gives_zero_steering():
         published = []
         node.pub_cmd.publish = published.append
 
-        msg = _make_lane_state(lateral_error=0.0, heading_error=0.0, curvature=0.0)
+        msg = _make_lane_state(
+            lateral_error=0.0, heading_error=0.0, curvature=0.0)
         node.on_lane_state(msg)
 
         cmd = published[0]
@@ -114,7 +118,8 @@ def test_curvature_feedforward_matches_atan_l_kappa():
         node.pub_cmd.publish = published.append
 
         kappa = 1.0 / 3.0  # R=3m, this track's tightest turn
-        msg = _make_lane_state(lateral_error=0.0, heading_error=0.0, curvature=kappa)
+        msg = _make_lane_state(
+            lateral_error=0.0, heading_error=0.0, curvature=kappa)
         for _ in range(5):
             node.on_lane_state(msg)
 
@@ -140,7 +145,8 @@ def test_solve_failure_decays_delta_toward_zero_not_repeat_last():
         original = mn.solve_fixed_reference
         mn.solve_fixed_reference = lambda *a, **k: 1  # any nonzero status
         try:
-            msg = _make_lane_state(lateral_error=0.05, heading_error=0.0, curvature=0.0)
+            msg = _make_lane_state(
+                lateral_error=0.05, heading_error=0.0, curvature=0.0)
             node.on_lane_state(msg)
         finally:
             mn.solve_fixed_reference = original
@@ -162,7 +168,6 @@ def test_age_calibration_handles_sim_clock_vs_wall_clock_offset():
     it runs."""
     node = mn.MpcNode()
     try:
-        from builtin_interfaces.msg import Time as TimeMsg
         stamp = TimeMsg(sec=5, nanosec=0)  # a plausible t_sim value
 
         age1 = node._age_s(stamp)
@@ -193,7 +198,8 @@ def test_fresh_valid_message_unaffected_by_health_gate():
         published = []
         node.pub_cmd.publish = published.append
 
-        msg = _make_lane_state(lateral_error=0.05, heading_error=0.0, curvature=0.0)
+        msg = _make_lane_state(
+            lateral_error=0.05, heading_error=0.0, curvature=0.0)
         node.on_lane_state(msg)
 
         assert node.n_invalid_consecutive == 0
@@ -216,7 +222,6 @@ def test_stale_message_triggers_safe_state():
         published = []
         node.pub_cmd.publish = published.append
 
-        from nav_msgs.msg import Odometry
         odom = Odometry()
         odom.twist.twist.linear.x = 1.0
         node.on_odom(odom)
@@ -275,18 +280,20 @@ def test_n_consecutive_invalid_triggers():
 
         msg = _make_lane_state(lateral_error=0.05, valid=False, confidence=0.1)
         for _ in range(mn.N_INVALID_CONSECUTIVE_THRESHOLD - 1):
-            node.on_lane_state(msg)  # count below threshold -- solves normally each time
+            node.on_lane_state(msg)  # below threshold -- solves normally
 
         assert node.n_solves == mn.N_INVALID_CONSECUTIVE_THRESHOLD - 1
         delta_before_trigger = node.delta_est
 
         node.on_lane_state(msg)  # count reaches threshold -- triggers
 
-        assert node.n_invalid_consecutive == mn.N_INVALID_CONSECUTIVE_THRESHOLD
-        assert node.n_solves == mn.N_INVALID_CONSECUTIVE_THRESHOLD - 1  # unchanged: skipped
+        threshold = mn.N_INVALID_CONSECUTIVE_THRESHOLD
+        assert node.n_invalid_consecutive == threshold
+        assert node.n_solves == threshold - 1  # unchanged: skipped
         cmd = published[-1]
-        assert cmd.angular.z == pytest.approx(delta_before_trigger * mn.FALLBACK_DECAY)
-        assert abs(cmd.angular.z) < abs(delta_before_trigger)  # decayed, not repeated
+        expected = delta_before_trigger * mn.FALLBACK_DECAY
+        assert cmd.angular.z == pytest.approx(expected)
+        assert abs(cmd.angular.z) < abs(delta_before_trigger)  # decayed
     finally:
         node.destroy_node()
 
@@ -301,7 +308,8 @@ def test_recovery_resumes_normal_immediately_no_ramp():
         published = []
         node.pub_cmd.publish = published.append
 
-        invalid_msg = _make_lane_state(lateral_error=0.05, valid=False, confidence=0.1)
+        invalid_msg = _make_lane_state(
+            lateral_error=0.05, valid=False, confidence=0.1)
         for _ in range(mn.N_INVALID_CONSECUTIVE_THRESHOLD):
             node.on_lane_state(invalid_msg)
         # N-1 of these solved normally (count below threshold each time),
@@ -310,8 +318,9 @@ def test_recovery_resumes_normal_immediately_no_ramp():
         n_solves_at_trigger = node.n_solves
         assert n_solves_at_trigger == mn.N_INVALID_CONSECUTIVE_THRESHOLD - 1
 
-        fresh_msg = _make_lane_state(lateral_error=0.05, heading_error=0.0,
-                                      curvature=0.0, valid=True, confidence=1.0)
+        fresh_msg = _make_lane_state(
+            lateral_error=0.05, heading_error=0.0, curvature=0.0,
+            valid=True, confidence=1.0)
         node.on_lane_state(fresh_msg)
 
         assert node.n_invalid_consecutive == 0

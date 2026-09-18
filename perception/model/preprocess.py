@@ -28,7 +28,8 @@ import os
 import numpy as np
 from PIL import Image
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "dataset", "cnn_input_config.json")
+CONFIG_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "dataset", "cnn_input_config.json")
 
 
 def _load_config():
@@ -48,14 +49,15 @@ def crop_and_resize(img: Image.Image) -> Image.Image:
     left, top = CROP["left"], CROP["top"]
     right, bottom = left + CROP["width"], top + CROP["height"]
     cropped = img.crop((left, top, right, bottom))
-    return cropped.resize((RESIZE_TO["width"], RESIZE_TO["height"]), Image.BILINEAR)
+    size = (RESIZE_TO["width"], RESIZE_TO["height"])
+    return cropped.resize(size, Image.BILINEAR)
 
 
 def to_standardized_array(img: Image.Image) -> np.ndarray:
     """PIL image -> float32 array, shape (3, H, W), per-image standardized:
     (x - mean) / (std + 1e-6). Assumes img is already the target crop/resize
     shape -- call crop_and_resize first."""
-    arr = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0  # (H, W, 3)
+    arr = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
     mean = arr.mean()
     std = arr.std()
     arr = (arr - mean) / (std + 1e-6)
@@ -87,7 +89,9 @@ DEFAULT_AUGMENT_PARAMS = {
 }
 
 
-def _jitter_brightness_contrast_gamma(arr: np.ndarray, rng: np.random.Generator, params: dict) -> np.ndarray:
+def _jitter_brightness_contrast_gamma(
+        arr: np.ndarray, rng: np.random.Generator,
+        params: dict) -> np.ndarray:
     """arr: (H, W, 3) float in [0, 1]."""
     brightness = rng.uniform(*params["brightness_range"])
     contrast = rng.uniform(*params["contrast_range"])
@@ -101,29 +105,40 @@ def _jitter_brightness_contrast_gamma(arr: np.ndarray, rng: np.random.Generator,
     return np.clip(arr, 0.0, 1.0)
 
 
-def _add_gaussian_noise(arr: np.ndarray, rng: np.random.Generator, params: dict) -> np.ndarray:
-    noise = rng.normal(0.0, params["gaussian_noise_sigma"], size=arr.shape).astype(np.float32)
+def _add_gaussian_noise(
+        arr: np.ndarray, rng: np.random.Generator,
+        params: dict) -> np.ndarray:
+    noise = rng.normal(
+        0.0, params["gaussian_noise_sigma"], size=arr.shape
+    ).astype(np.float32)
     return np.clip(arr + noise, 0.0, 1.0)
 
 
-def _random_erasing(arr: np.ndarray, rng: np.random.Generator, params: dict) -> np.ndarray:
+def _random_erasing(
+        arr: np.ndarray, rng: np.random.Generator,
+        params: dict) -> np.ndarray:
     """Up to max_erasing_patches rectangles, each under
     max_erasing_area_frac of the image area, filled with uniform noise."""
     h, w = arr.shape[0], arr.shape[1]
     total_area = h * w
     n_patches = rng.integers(0, params["max_erasing_patches"] + 1)
     for _ in range(n_patches):
-        patch_area = rng.uniform(params["min_erasing_area_frac"], params["max_erasing_area_frac"]) * total_area
+        area_frac = rng.uniform(
+            params["min_erasing_area_frac"], params["max_erasing_area_frac"])
+        patch_area = area_frac * total_area
         aspect = rng.uniform(0.3, 3.3)
         patch_h = min(h, max(1, int(round((patch_area * aspect) ** 0.5))))
         patch_w = min(w, max(1, int(round((patch_area / aspect) ** 0.5))))
         top = rng.integers(0, h - patch_h + 1)
         left = rng.integers(0, w - patch_w + 1)
-        arr[top:top + patch_h, left:left + patch_w, :] = rng.uniform(0.0, 1.0)
+        patch = arr[top:top + patch_h, left:left + patch_w, :]
+        patch[:] = rng.uniform(0.0, 1.0)
     return arr
 
 
-def augment_image(img: Image.Image, rng: np.random.Generator, params: dict = None) -> Image.Image:
+def augment_image(
+        img: Image.Image, rng: np.random.Generator,
+        params: dict = None) -> Image.Image:
     """Applied to an already crop_and_resize'd image, BEFORE standardization.
     Pixel-space only -- no flip (mirrors already exist in the dataset,
     ADR-10, and a mirror pair shares a split, so flipping again would pair a

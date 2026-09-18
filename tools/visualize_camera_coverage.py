@@ -1,24 +1,25 @@
-"""
-Contact sheet: render actual camera frames and overlay what the visibility
-filter (perception/dataset/camera_visibility.py) computes, so a human can
-catch a filter that is wrong even though every unit test passes -- the same
-failure mode ADR-8 documents (internally consistent maths, wrong geometry,
-invisible without looking).
+"""Contact sheet: render actual camera frames and overlay what the
+visibility filter (perception/dataset/camera_visibility.py) computes,
+so a human can catch a filter that is wrong even though every unit
+test passes -- the same failure mode ADR-8 documents (internally
+consistent maths, wrong geometry, invisible without looking).
 
-For each pose: lane boundary candidate points ahead, colour-coded by whether
-point_visible() accepted them; the centreline; the horizon line; distance
-ticks along the centreline; the CNN input crop rectangle (from
-perception/dataset/cnn_input_config.json, not hard-coded here); and a text
-verdict (visible-point count vs MIN_VISIBLE_POINTS, accept/reject).
+For each pose: lane boundary candidate points ahead, colour-coded by
+whether point_visible() accepted them; the centreline; the horizon
+line; distance ticks along the centreline; the CNN input crop
+rectangle (from perception/dataset/cnn_input_config.json, not
+hard-coded here); and a text verdict (visible-point count vs
+MIN_VISIBLE_POINTS, accept/reject).
 
 Usage:
     python3 tools/visualize_camera_coverage.py
-        -> docs/dataset/camera_coverage_contact_sheet.png, ~24 curated poses
+        -> docs/dataset/camera_coverage_contact_sheet.png, ~24 poses
 
     python3 tools/visualize_camera_coverage.py --pose 2.0 0.1 0.0
         -> renders and annotates a single pose to /tmp, opens nothing
 
-    python3 tools/visualize_camera_coverage.py --from-dataset data/dataset_v0/labels.csv --n 24
+    python3 tools/visualize_camera_coverage.py \\
+        --from-dataset data/dataset_v0/labels.csv --n 24
         -> samples N poses from an existing dataset record file instead
 """
 
@@ -31,20 +32,27 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import mujoco
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+import mujoco  # noqa: E402
+import numpy as np  # noqa: E402
+from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 
-from perception.dataset.camera_visibility import (
-    project_to_pixel,
+from perception.dataset.camera_visibility import (  # noqa: E402
+    project_to_pixel, CAM_HEIGHT,
     LOOKAHEAD_M, LOOKAHEAD_SAMPLES, MIN_VISIBLE_POINTS, IMG_WIDTH, IMG_HEIGHT,
 )
-from perception.dataset.track_definitions import REFERENCE_TRACK, LANE_HALF_WIDTH
-from perception.dataset.generate_dataset import POS_LATERAL_RANGE, POS_HEADING_RANGE
-from perception.dataset.render_dataset_images import VEHICLE_XML, quat_from_heading
+from perception.dataset.track_definitions import (  # noqa: E402
+    REFERENCE_TRACK, LANE_HALF_WIDTH,
+)
+from perception.dataset.generate_dataset import (  # noqa: E402
+    POS_LATERAL_RANGE, POS_HEADING_RANGE, sample_pose,
+)
+from perception.dataset.render_dataset_images import (  # noqa: E402
+    VEHICLE_XML, quat_from_heading,
+)
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "perception", "dataset",
-                            "cnn_input_config.json")
+CONFIG_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "perception", "dataset",
+    "cnn_input_config.json")
 OUT_DIR = "docs/dataset"
 OUT_PNG = f"{OUT_DIR}/camera_coverage_contact_sheet.png"
 DISTANCE_TICKS_M = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0]
@@ -71,8 +79,8 @@ def horizon_row(vehicle_x, vehicle_y, vehicle_heading):
     far = 5000.0
     fx = vehicle_x + far * ch
     fy = vehicle_y + far * sh
-    from perception.dataset.camera_visibility import CAM_HEIGHT
-    _, v, _, _ = project_to_pixel(fx, fy, CAM_HEIGHT, vehicle_x, vehicle_y, vehicle_heading)
+    _, v, _, _ = project_to_pixel(
+        fx, fy, CAM_HEIGHT, vehicle_x, vehicle_y, vehicle_heading)
     return v
 
 
@@ -108,12 +116,13 @@ def build_contact_sheet_poses():
         # does not decay gently with heading offset; it collapses sharply
         # around ~2.5-3.0x POS_HEADING_RANGE regardless of curvature group,
         # found by sweeping count_visible_lane_points directly.
-        poses.append(pose_at(s, 0.0, 2.5 * POS_HEADING_RANGE, f"{name} / near-accept"))
-        poses.append(pose_at(s, 0.0, 2.9 * POS_HEADING_RANGE, f"{name} / near-reject"))
+        poses.append(pose_at(
+            s, 0.0, 2.5 * POS_HEADING_RANGE, f"{name} / near-accept"))
+        poses.append(pose_at(
+            s, 0.0, 2.9 * POS_HEADING_RANGE, f"{name} / near-reject"))
 
     # Realistic negatives: reuse the actual rejection-sampled generator so
     # these are genuine dataset negatives, not hand-picked strawmen.
-    from perception.dataset.generate_dataset import sample_pose
     rng = np.random.default_rng(2024)
     for i in range(3):
         x, y, heading, _ = sample_pose(rng, negative=True)
@@ -136,17 +145,17 @@ def render_pose(model, data, renderer, qadr, x, y, heading):
     return renderer.render()
 
 
-MARGIN = 40  # px of canvas beyond the true 320x240 frame, so a rejected
-             # (out-of-frame) candidate that just missed can still be drawn
-             # in red near the edge instead of being invisible -- point_visible
-             # IS the in-frame test, so without this margin every point that
-             # gets drawn at all is green by construction and "colour-coded
-             # by whether point_visible accepted them" would be a no-op.
+# px of canvas beyond the true 320x240 frame, so a rejected (out-of-frame)
+# candidate that just missed can still be drawn near the edge instead of
+# being invisible -- point_visible IS the in-frame test, so without this
+# margin every point drawn at all would be green by construction.
+MARGIN = 40
 
 
 def annotate(pixels, x, y, heading, crop_cfg):
     base = Image.fromarray(pixels).convert("RGB")
-    img = Image.new("RGB", (IMG_WIDTH + 2 * MARGIN, IMG_HEIGHT + 2 * MARGIN), (15, 15, 15))
+    canvas_size = (IMG_WIDTH + 2 * MARGIN, IMG_HEIGHT + 2 * MARGIN)
+    img = Image.new("RGB", canvas_size, (15, 15, 15))
     img.paste(base, (MARGIN, MARGIN))
     draw = ImageDraw.Draw(img)
     try:
@@ -158,7 +167,8 @@ def annotate(pixels, x, y, heading, crop_cfg):
         return u + MARGIN, v + MARGIN
 
     def in_margin_canvas(u, v):
-        return -MARGIN <= u <= IMG_WIDTH + MARGIN and -MARGIN <= v <= IMG_HEIGHT + MARGIN
+        return (-MARGIN <= u <= IMG_WIDTH + MARGIN
+                and -MARGIN <= v <= IMG_HEIGHT + MARGIN)
 
     # True camera-frame boundary, so the margin area reads as "outside the
     # real image" rather than more valid frame.
@@ -174,8 +184,9 @@ def annotate(pixels, x, y, heading, crop_cfg):
     # visible, not merely absent.
     n_visible = 0
     n_candidates = 0
+    total_length = REFERENCE_TRACK.total_length
     for i in range(LOOKAHEAD_SAMPLES):
-        s = (s0 + LOOKAHEAD_M * i / LOOKAHEAD_SAMPLES) % REFERENCE_TRACK.total_length
+        s = (s0 + LOOKAHEAD_M * i / LOOKAHEAD_SAMPLES) % total_length
         cx, cy = REFERENCE_TRACK.point_at(s)
         h = REFERENCE_TRACK.heading_at(s)
         nx, ny = -math.sin(h), math.cos(h)
@@ -183,7 +194,8 @@ def annotate(pixels, x, y, heading, crop_cfg):
             bx = cx + side * LANE_HALF_WIDTH * nx
             by = cy + side * LANE_HALF_WIDTH * ny
             n_candidates += 1
-            u, v, depth, in_frame = project_to_pixel(bx, by, 0.02, x, y, heading)
+            u, v, depth, in_frame = project_to_pixel(
+                bx, by, 0.02, x, y, heading)
             if in_frame:
                 n_visible += 1
             if u is None or not in_margin_canvas(u, v):
@@ -195,9 +207,10 @@ def annotate(pixels, x, y, heading, crop_cfg):
 
     # Centreline, thin blue dots.
     for i in range(LOOKAHEAD_SAMPLES):
-        s = (s0 + LOOKAHEAD_M * i / LOOKAHEAD_SAMPLES) % REFERENCE_TRACK.total_length
+        s = (s0 + LOOKAHEAD_M * i / LOOKAHEAD_SAMPLES) % total_length
         cx, cy = REFERENCE_TRACK.point_at(s)
-        u, v, depth, in_frame = project_to_pixel(cx, cy, 0.02, x, y, heading)
+        u, v, depth, in_frame = project_to_pixel(
+            cx, cy, 0.02, x, y, heading)
         if u is not None and in_margin_canvas(u, v):
             cu, cv = to_canvas(u, v)
             draw.point([cu, cv], fill=BLUE)
@@ -224,11 +237,14 @@ def annotate(pixels, x, y, heading, crop_cfg):
     # accurate the day the config changes.
     c = crop_cfg["crop"]
     cx0, cy0 = to_canvas(c["left"], c["top"])
-    cx1, cy1 = to_canvas(c["left"] + c["width"] - 1, c["top"] + c["height"] - 1)
+    cx1, cy1 = to_canvas(
+        c["left"] + c["width"] - 1, c["top"] + c["height"] - 1)
     draw.rectangle([cx0, cy0, cx1, cy1], outline=(255, 140, 0), width=1)
 
     verdict = "ACCEPT" if n_visible >= MIN_VISIBLE_POINTS else "REJECT"
-    text = f"visible={n_visible}/{n_candidates} min={MIN_VISIBLE_POINTS} {verdict}"
+    text = (
+        f"visible={n_visible}/{n_candidates} "
+        f"min={MIN_VISIBLE_POINTS} {verdict}")
     draw.rectangle([0, img.height - 12, img.width, img.height], fill=(0, 0, 0))
     draw.text((2, img.height - 11), text, fill=WHITE, font=font)
 
@@ -243,7 +259,9 @@ def load_dataset_poses(csv_path, n, seed=0):
     poses = []
     for idx in chosen:
         r = rows[idx]
-        poses.append((r["filename"], float(r["x"]), float(r["y"]), float(r["heading"])))
+        poses.append((
+            r["filename"], float(r["x"]), float(r["y"]),
+            float(r["heading"])))
     return poses
 
 
@@ -264,7 +282,8 @@ def build_contact_sheet(poses, out_path, cols=4):
         pixels = render_pose(model, data, renderer, qadr, x, y, heading)
         img = annotate(pixels, x, y, heading, crop_cfg)
         caption_h = 14
-        tile = Image.new("RGB", (img.width, img.height + caption_h), (20, 20, 20))
+        tile_size = (img.width, img.height + caption_h)
+        tile = Image.new("RGB", tile_size, (20, 20, 20))
         tile.paste(img, (0, 0))
         d = ImageDraw.Draw(tile)
         d.text((2, img.height + 1), label, fill=WHITE, font=font)
@@ -273,8 +292,9 @@ def build_contact_sheet(poses, out_path, cols=4):
     rows = math.ceil(len(tiles) / cols)
     tw, th = tiles[0].size
     pad = 4
-    sheet = Image.new("RGB", (cols * tw + (cols + 1) * pad, rows * th + (rows + 1) * pad),
-                       (40, 40, 40))
+    sheet_size = (
+        cols * tw + (cols + 1) * pad, rows * th + (rows + 1) * pad)
+    sheet = Image.new("RGB", sheet_size, (40, 40, 40))
     for i, tile in enumerate(tiles):
         r, c = divmod(i, cols)
         sheet.paste(tile, (pad + c * (tw + pad), pad + r * (th + pad)))
@@ -286,7 +306,8 @@ def build_contact_sheet(poses, out_path, cols=4):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pose", nargs=3, type=float, metavar=("X", "Y", "HEADING"))
+    ap.add_argument(
+        "--pose", nargs=3, type=float, metavar=("X", "Y", "HEADING"))
     ap.add_argument("--from-dataset", type=str, default=None)
     ap.add_argument("--n", type=int, default=24)
     ap.add_argument("--out", type=str, default=None)

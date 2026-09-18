@@ -21,12 +21,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 acados_template = pytest.importorskip("acados_template")
 
-import numpy as np
+import numpy as np  # noqa: E402
 
-from control.mpc.ocp import build_ocp, solve_fixed_reference
-from control.mpc.params import R_MIN
-from perception.dataset.track_definitions import REFERENCE_TRACK
-from perception.dataset.windowed_relabel import windowed_curvature_average
+from control.mpc.ocp import build_ocp, solve_fixed_reference  # noqa: E402
+from control.mpc.params import R_MIN  # noqa: E402
+from perception.dataset.track_definitions import (  # noqa: E402
+    REFERENCE_TRACK,
+)
+from perception.dataset.windowed_relabel import (  # noqa: E402
+    windowed_curvature_average,
+)
 
 
 def _make_solver(c0=0.0, c1=0.0, c2=0.0, v=1.0):

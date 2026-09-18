@@ -35,7 +35,8 @@ import os
 
 from perception.dataset.geometry import Track
 
-_CROP_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "cnn_input_config.json")
+_CROP_CONFIG_PATH = os.path.join(
+    os.path.dirname(__file__), "cnn_input_config.json")
 with open(_CROP_CONFIG_PATH) as _f:
     _crop_cfg = json.load(_f)
 CROP_TOP = _crop_cfg["crop"]["top"]
@@ -46,10 +47,10 @@ CROP_RIGHT = CROP_LEFT + _crop_cfg["crop"]["width"]
 # --- Camera parameters, from sim/models/car.xml (cam_front) ---
 CAM_OFFSET_FORWARD = 0.16    # m, along vehicle x, from chassis origin
 CAM_HEIGHT = 0.125           # m, world z (chassis z=0.075 + camera z=0.05)
-CAM_PITCH_DOWN = 0.30587887140485215  # rad, ~17.5 deg; exact value from
-                                       # normalizing the MJCF xyaxes y-vector
-                                       # (0.3, 0, 0.95). Verified against
-                                       # MuJoCo's own extrinsics to <1e-9 m.
+
+# rad, ~17.5 deg; exact value from normalizing the MJCF xyaxes y-vector
+# (0.3, 0, 0.95). Verified against MuJoCo's own extrinsics to <1e-9 m.
+CAM_PITCH_DOWN = 0.30587887140485215
 CAM_FOVY_DEG = 75.0
 IMG_WIDTH, IMG_HEIGHT = 320, 240
 
@@ -119,7 +120,8 @@ def project_to_pixel(px, py, pz, vehicle_x, vehicle_y, vehicle_heading):
     value in that case (they are still returned, for debugging/plotting, but
     are meaningless off-frustum since depth could be near zero).
     """
-    cx, cy, cz = point_in_camera_frame(px, py, pz, vehicle_x, vehicle_y, vehicle_heading)
+    cx, cy, cz = point_in_camera_frame(
+        px, py, pz, vehicle_x, vehicle_y, vehicle_heading)
     depth = -cz
     if depth <= 1e-6:
         return None, None, depth, False  # behind the camera, or at the camera
@@ -137,24 +139,28 @@ def project_to_pixel(px, py, pz, vehicle_x, vehicle_y, vehicle_heading):
 
 
 def point_visible(px, py, pz, vehicle_x, vehicle_y, vehicle_heading) -> bool:
-    _, _, _, in_frame = project_to_pixel(px, py, pz, vehicle_x, vehicle_y, vehicle_heading)
+    _, _, _, in_frame = project_to_pixel(
+        px, py, pz, vehicle_x, vehicle_y, vehicle_heading)
     return in_frame
 
 
-def point_visible_in_crop(px, py, pz, vehicle_x, vehicle_y, vehicle_heading) -> bool:
+def point_visible_in_crop(
+        px, py, pz, vehicle_x, vehicle_y, vehicle_heading) -> bool:
     """Like point_visible, but also requires the pixel to fall within the
     CNN's actual input crop (CROP_TOP/BOTTOM/LEFT/RIGHT), not merely
     somewhere in the full render. This is what the dataset generator's
     visibility counts use -- a point outside the crop is invisible to the
     network regardless of whether MuJoCo would have rendered it."""
-    u, v, _, in_frame = project_to_pixel(px, py, pz, vehicle_x, vehicle_y, vehicle_heading)
+    u, v, _, in_frame = project_to_pixel(
+        px, py, pz, vehicle_x, vehicle_y, vehicle_heading)
     if not in_frame:
         return False
     return (CROP_LEFT <= u <= CROP_RIGHT) and (CROP_TOP <= v <= CROP_BOTTOM)
 
 
-def count_visible_lane_points(track: Track, vehicle_x, vehicle_y, vehicle_heading,
-                               lane_half_width: float) -> int:
+def count_visible_lane_points(
+        track: Track, vehicle_x, vehicle_y, vehicle_heading,
+        lane_half_width: float) -> int:
     """Count lane-boundary sample points ahead of the vehicle that fall
     inside the camera image."""
     s0 = track.project(vehicle_x, vehicle_y)
@@ -168,29 +174,31 @@ def count_visible_lane_points(track: Track, vehicle_x, vehicle_y, vehicle_headin
         for side in (+1.0, -1.0):
             bx = cx + side * lane_half_width * nx
             by = cy + side * lane_half_width * ny
-            if point_visible_in_crop(bx, by, 0.02, vehicle_x, vehicle_y, vehicle_heading):
+            if point_visible_in_crop(
+                    bx, by, 0.02, vehicle_x, vehicle_y, vehicle_heading):
                 count += 1
     return count
 
 
-def lane_is_visible(track: Track, vehicle_x, vehicle_y, vehicle_heading,
-                     lane_half_width: float) -> bool:
-    n = count_visible_lane_points(track, vehicle_x, vehicle_y, vehicle_heading,
-                                   lane_half_width)
+def lane_is_visible(
+        track: Track, vehicle_x, vehicle_y, vehicle_heading,
+        lane_half_width: float) -> bool:
+    n = count_visible_lane_points(
+        track, vehicle_x, vehicle_y, vehicle_heading, lane_half_width)
     return n >= MIN_VISIBLE_POINTS
 
 
 # Whole-track scan, used to qualify NEGATIVE samples. The forward-window
-# check above answers "can the vehicle see the lane it should be following";
-# this one answers "can the camera see ANY lane marking at all". On a closed
-# 45 m loop the two differ a lot: a vehicle 4 m off course frequently has a
-# different part of the loop in frame. Such a sample is not a usable negative
-# — the CNN would see clear markings while the label says confidence=0.
+# check above answers "can the vehicle see the lane it should be
+# following"; this one answers "can the camera see ANY lane marking at
+# all". Such a sample is not a usable negative -- the CNN would see
+# clear markings while the label says confidence=0.
 WHOLE_TRACK_SAMPLES = 400
 
 
-def count_visible_lane_points_whole_track(track: Track, vehicle_x, vehicle_y,
-                                           vehicle_heading, lane_half_width: float) -> int:
+def count_visible_lane_points_whole_track(
+        track: Track, vehicle_x, vehicle_y, vehicle_heading,
+        lane_half_width: float) -> int:
     count = 0
     for i in range(WHOLE_TRACK_SAMPLES):
         s = track.total_length * i / WHOLE_TRACK_SAMPLES
@@ -200,13 +208,15 @@ def count_visible_lane_points_whole_track(track: Track, vehicle_x, vehicle_y,
         for side in (+1.0, -1.0):
             bx = cx + side * lane_half_width * nx
             by = cy + side * lane_half_width * ny
-            if point_visible_in_crop(bx, by, 0.02, vehicle_x, vehicle_y, vehicle_heading):
+            if point_visible_in_crop(
+                    bx, by, 0.02, vehicle_x, vehicle_y, vehicle_heading):
                 count += 1
     return count
 
 
-def any_lane_visible(track: Track, vehicle_x, vehicle_y, vehicle_heading,
-                      lane_half_width: float) -> bool:
-    n = count_visible_lane_points_whole_track(track, vehicle_x, vehicle_y,
-                                               vehicle_heading, lane_half_width)
+def any_lane_visible(
+        track: Track, vehicle_x, vehicle_y, vehicle_heading,
+        lane_half_width: float) -> bool:
+    n = count_visible_lane_points_whole_track(
+        track, vehicle_x, vehicle_y, vehicle_heading, lane_half_width)
     return n >= MIN_VISIBLE_POINTS

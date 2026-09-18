@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Pont ZeroMQ <-> ROS2.
+"""ZeroMQ <-> ROS2 bridge.
 
-Cote VM. C'est le SEUL noeud qui connait la simulation : pour tout le
-reste du graphe, il n'y a qu'un robot qui publie une camera et une
-odometrie, et qui accepte une commande. Le jour ou l'on branche le
-Raspberry Pi, on remplace ce noeud, pas les autres.
+Runs on the VM. This is the ONLY node that knows about the simulator --
+for the rest of the graph there is just a robot that publishes a camera
+and odometry, and accepts a command. The day the Raspberry Pi is wired
+in, this node gets replaced, not the others.
 
     /carsim/image_raw   sensor_msgs/Image      (~30 Hz)
     /carsim/odom        nav_msgs/Odometry      (~50 Hz)
-    /carsim/latency_ms  std_msgs/Float32       latence sim -> ros
-    /carsim/cmd         geometry_msgs/Twist    linear.x = accel, angular.z = braquage
+    /carsim/latency_ms  std_msgs/Float32       sim -> ros latency
+    /carsim/cmd         geometry_msgs/Twist    linear.x=accel, angular.z=steer
 """
 import math
 
@@ -27,11 +27,10 @@ from carsim_bridge import protocol as P
 
 
 def sim_time_to_stamp(t_sim):
-    """MuJoCo simulation time (float, seconds since sim start -- sim_server.py's
-    data.time) -> builtin_interfaces/Time. docs/lane-state-contract.md section 3:
-    header.stamp must be the render time, propagated end to end, never the VM's
-    receipt wall-clock -- see docs/decisions.md ADR-13. Module-level, not a
-    method: pure function of t_sim, independently testable."""
+    """MuJoCo sim time (seconds since sim start, sim_server.py's data.time)
+    -> builtin_interfaces/Time. header.stamp must be the render time, not
+    the VM's receipt wall-clock (docs/decisions.md ADR-13, lane-state-
+    contract.md section 3). Module-level: a pure function of t_sim."""
     return RclpyTime(seconds=t_sim).to_msg()
 
 
@@ -55,11 +54,9 @@ class BridgeNode(Node):
         self.ctx = zmq.Context()
         self.sub = self.ctx.socket(zmq.SUB)
         self.sub.setsockopt(zmq.SUBSCRIBE, b'')
-        # 50, not 2: with poll() now processing every drained frame (see
-        # drain_state below), this is a real safety margin against a burst
-        # bigger than the largest observed (2, measured empirically under
-        # UTM's virtualised networking -- see drain_state's docstring), not
-        # a number that silently discards anything under normal operation.
+        # Margin above the largest burst observed under UTM's virtualised
+        # network (2 frames -- see drain_state's docstring), not a number
+        # that silently drops frames in normal operation.
         self.sub.setsockopt(zmq.RCVHWM, 50)
         self.sub.connect(f'tcp://{host}:{state_port}')
 
@@ -68,9 +65,12 @@ class BridgeNode(Node):
         self.pub_cmd.connect(f'tcp://{host}:{cmd_port}')
 
         sensor_qos = QoSPresetProfiles.SENSOR_DATA.value
-        self.pub_img = self.create_publisher(Image, 'carsim/image_raw', sensor_qos)
-        self.pub_odom = self.create_publisher(Odometry, 'carsim/odom', sensor_qos)
-        self.pub_lat = self.create_publisher(Float32, 'carsim/latency_ms', 10)
+        self.pub_img = self.create_publisher(
+            Image, 'carsim/image_raw', sensor_qos)
+        self.pub_odom = self.create_publisher(
+            Odometry, 'carsim/odom', sensor_qos)
+        self.pub_lat = self.create_publisher(
+            Float32, 'carsim/latency_ms', 10)
         self.create_subscription(Twist, 'carsim/cmd', self.on_cmd, 10)
 
         self.cmd_seq = 0
@@ -83,27 +83,24 @@ class BridgeNode(Node):
         self.create_timer(1.0 / poll_hz, self.poll)
         self.create_timer(2.0, self.report)
         self.get_logger().info(
-            f'pont actif  etat<-tcp://{host}:{state_port}  cmd->tcp://{host}:{cmd_port}')
-
-    # ------------------------------------------------------------------ #
+            f'bridge active  state<-tcp://{host}:{state_port}  '
+            f'cmd->tcp://{host}:{cmd_port}')
 
     def drain_state(self):
-        """Vide la file ZMQ et renvoie TOUTES les trames en attente, dans
-        l'ordre d'arrivee.
+        """Drain the ZMQ queue and return ALL pending frames, in arrival
+        order.
 
-        Gardait auparavant uniquement la derniere trame (pour ne jamais
-        traiter un etat perime en boucle de controle temps reel), mais
-        mesure sur la VM : le reseau virtualise d'UTM livre par moments 2
-        trames dans la meme fenetre de poll meme avec poll() a 200 Hz,
-        largement plus rapide que la publication a 50 Hz (rafale max
-        observee : 2, jamais plus, sur 1600 ticks a 200 Hz / 8 s). Ne garder
-        que la derniere de chaque rafale jetait ~40% des etats et ~70% des
-        images -- une image sur deux tics seulement, donc statistiquement
-        plus souvent la trame la plus ancienne d'une rafale, la moins
-        susceptible de survivre. Chaque trame drainee ici reste fraiche (elle
-        vient d'arriver dans la meme fenetre de quelques ms) : la traiter
-        n'introduit pas la latence que la version precedente cherchait a
-        eviter.
+        Used to keep only the latest frame, to avoid ever processing a
+        stale state in a real-time control loop. Measured on the VM:
+        UTM's virtualised network occasionally delivers 2 frames in the
+        same poll window even at 200 Hz (4x the 50 Hz publish rate) --
+        largest observed burst was 2, over 1600 ticks / 8s. Keeping only
+        the last of each burst discarded ~40% of states and ~70% of
+        images (image capture is already 1 tick in 2, so it's
+        disproportionately the older frame of a burst that gets
+        dropped). Every frame drained here is still fresh (it arrived
+        within the same few-ms poll window), so processing all of them
+        doesn't reintroduce the latency the previous approach avoided.
         """
         frames_list = []
         while True:
@@ -168,12 +165,14 @@ class BridgeNode(Node):
 
     def report(self):
         if self.n_state == 0:
-            self.get_logger().warn('aucun etat recu -- simulation lancee ? IP correcte ?')
+            self.get_logger().warn(
+                'no state received -- is the sim running? right IP?')
             return
         self.get_logger().info(
-            f'etat {self.n_state / 2.0:5.1f} Hz | img {self.n_img / 2.0:5.1f} Hz | '
-            f'latence {self.lat_sum / self.n_state:5.2f} ms | '
-            f'sautees {self.n_skipped} | cmd {self.cmd_seq}')
+            f'state {self.n_state / 2.0:5.1f} Hz | '
+            f'img {self.n_img / 2.0:5.1f} Hz | '
+            f'latency {self.lat_sum / self.n_state:5.2f} ms | '
+            f'skipped {self.n_skipped} | cmd {self.cmd_seq}')
         self.n_state = self.n_img = self.n_skipped = 0
         self.lat_sum = 0.0
 

@@ -1,45 +1,39 @@
 #!/usr/bin/env python3
-"""
-Ground-truth monitor for the full ROS2 chain (sim_server -> bridge_node ->
-perception_node -> mpc_node -> bridge_node -> sim) -- M3's first full-chain
-integration run. Sibling to control/mpc/closed_loop_sim.py (perfect
-simulator-truth state, no perception/ROS2 in the loop): this is the
-opposite end, real noisy perception through the real ROS2 graph, nothing
-bypassed.
+"""Ground-truth monitor for the full ROS2 chain (sim_server ->
+bridge_node -> perception_node -> mpc_node -> bridge_node -> sim) --
+M3's first full-chain integration run. Sibling to
+control/mpc/closed_loop_sim.py (perfect simulator-truth state, no
+perception/ROS2 in the loop): this is the opposite end, real noisy
+perception through the real ROS2 graph, nothing bypassed.
 
-Read-only observer: subscribes to /carsim/odom (true pose+velocity,
-ground truth) and /lane_state (perception's own reported values, for
-side-by-side comparison against ground truth) -- publishes nothing,
-participates in no control decision. Ground truth (c0,c1,c2)/kappa
-computed the SAME way closed_loop_sim.py's perfect-state run did
-(compute_lane_state's point-wise Frenet projection for lateral_error/
-heading_error, windowed_curvature_average for kappa, ADR-18's validated
-method) from the TRUE odometry pose -- not from /lane_state's own
-self-reported values, so perception's own error is visible here rather
-than perception grading itself.
+Read-only observer: subscribes to /carsim/odom (true pose+velocity)
+and /lane_state (perception's own reported values, for side-by-side
+comparison) -- publishes nothing, participates in no control decision.
+Ground truth (c0,c1,c2)/kappa computed the SAME way
+closed_loop_sim.py's perfect-state run did (compute_lane_state,
+windowed_curvature_average, ADR-18) from the TRUE odometry pose, not
+from /lane_state's own self-reported values, so perception's own error
+is visible here rather than perception grading itself.
 
-Logs at /lane_state's own rate (not odom's faster ~50 Hz), matching
-mpc_node's own control cadence and closed_loop_sim.py's logging rate, for
-a directly comparable .npz. Solve status/solve time and health-fallback-
-trigger counts are NOT observable from outside mpc_node without either
-modifying it or parsing its own log output -- this script does neither
-(deliberately: no changes to mpc_node.py for this diagnostic run); those
-numbers come from grepping mpc_node's own periodic aggregate reports and
-warning lines after the run, reported separately from this script's .npz.
+Logs at /lane_state's own rate, matching mpc_node's control cadence
+and closed_loop_sim.py's logging rate, for a directly comparable .npz.
+Solve status/solve time and health-fallback-trigger counts are not
+observable from outside mpc_node without modifying it -- this script
+does neither; those numbers come from grepping mpc_node's own log
+after the run, reported separately from this script's .npz.
 
 Run on the VM, full chain already up (sim_server on the Mac,
 bridge_node/perception_node/mpc_node on the VM):
     source /opt/ros/kilted/setup.bash
     source ~/ros2_ws/install/setup.bash
     source ~/venvs/ackerman_ros2/bin/activate
-    python3 control/mpc/chain_monitor.py --laps 3 --out-dir /tmp --tag chain_run
+    python3 control/mpc/chain_monitor.py --laps 3 --out-dir /tmp \
+        --tag chain_run
 
-Also writes a `{tag}_checkpoint_log.npz` snapshot every checkpoint_interval_s
-(default 120s), overwritten each time -- added for the M3 sustained-
-stability run (many minutes long), so a trend (or a reason to stop early)
-can be read from outside without waiting for the run's own final save.
-Purely additive: doesn't touch self.log, so the final `_save()` behavior
-below (on reaching --laps) is unchanged.
+Also writes a `{tag}_checkpoint_log.npz` snapshot every
+checkpoint_interval_s (default 120s), overwritten each time, so a
+sustained run's trend (or a reason to stop early) can be read without
+waiting for the run's own final save.
 """
 import argparse
 import math
@@ -49,22 +43,26 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import numpy as np
-import rclpy
-from nav_msgs.msg import Odometry
-from rclpy.node import Node
-from rclpy.qos import QoSPresetProfiles
-from rclpy.time import Time as RclpyTime
+import numpy as np  # noqa: E402
+import rclpy  # noqa: E402
+from nav_msgs.msg import Odometry  # noqa: E402
+from rclpy.node import Node  # noqa: E402
+from rclpy.qos import QoSPresetProfiles  # noqa: E402
 
 from carsim_bridge.clock_utils import AgeCalibrator  # noqa: E402
 from carsim_msgs.msg import LaneState  # noqa: E402
 from perception.dataset.geometry import compute_lane_state  # noqa: E402
-from perception.dataset.track_definitions import REFERENCE_TRACK  # noqa: E402
-from perception.dataset.windowed_relabel import windowed_curvature_average  # noqa: E402
+from perception.dataset.track_definitions import (  # noqa: E402
+    REFERENCE_TRACK,
+)
+from perception.dataset.windowed_relabel import (  # noqa: E402
+    windowed_curvature_average,
+)
 
 
 def yaw_from_quat(q):
-    return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+    return math.atan2(
+        2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
 
 
 class ChainMonitor(Node):
@@ -75,9 +73,11 @@ class ChainMonitor(Node):
         self.out_dir = out_dir
         self.tag = tag
 
-        self.create_subscription(Odometry, 'carsim/odom', self.on_odom,
-                                  QoSPresetProfiles.SENSOR_DATA.value)
-        self.create_subscription(LaneState, 'lane_state', self.on_lane_state, 10)
+        self.create_subscription(
+            Odometry, 'carsim/odom', self.on_odom,
+            QoSPresetProfiles.SENSOR_DATA.value)
+        self.create_subscription(
+            LaneState, 'lane_state', self.on_lane_state, 10)
         if checkpoint_interval_s > 0:
             self.create_timer(checkpoint_interval_s, self._checkpoint)
 
@@ -109,8 +109,10 @@ class ChainMonitor(Node):
         if not self.have_odom or self.done:
             return
 
-        lane_state = compute_lane_state(REFERENCE_TRACK, self.x, self.y, self.yaw)
-        kappa_true = windowed_curvature_average(REFERENCE_TRACK, self.x, self.y)
+        lane_state = compute_lane_state(
+            REFERENCE_TRACK, self.x, self.y, self.yaw)
+        kappa_true = windowed_curvature_average(
+            REFERENCE_TRACK, self.x, self.y)
 
         now_ns = self.get_clock().now().nanoseconds
         age_s = self._age_calibrator.age_s(now_ns, msg.header.stamp)
@@ -137,7 +139,8 @@ class ChainMonitor(Node):
         self.log["heading_error"].append(lane_state.heading_error)
         self.log["kappa"].append(kappa_true)
         self.log["perception_lateral_error"].append(float(msg.lateral_error))
-        self.log["perception_heading_error"].append(float(msg.heading_error))
+        self.log["perception_heading_error"].append(
+            float(msg.heading_error))
         self.log["perception_kappa"].append(float(msg.curvature))
         self.log["perception_confidence"].append(float(msg.confidence))
         self.log["perception_valid"].append(bool(msg.valid))
@@ -150,7 +153,8 @@ class ChainMonitor(Node):
                 f'{self.n_lane_state_msgs} /lane_state msgs, '
                 f'{laps_done:.2f} laps, t={t:.1f}s')
 
-        if self.total_unwrapped_s >= self.laps_target * REFERENCE_TRACK.total_length:
+        target_s = self.laps_target * REFERENCE_TRACK.total_length
+        if self.total_unwrapped_s >= target_s:
             self.done = True
             self._save()
 
@@ -165,20 +169,21 @@ class ChainMonitor(Node):
             f'saved to {out_path}')
 
     def _checkpoint(self):
-        """Periodic snapshot for a run long enough that waiting for _save()
-        isn't practical -- builds arrays from copies of the current lists
-        rather than converting self.log in place, so on_lane_state's own
-        appends (and the eventual real _save()) are unaffected by this
-        running concurrently on the executor."""
+        """Periodic snapshot for a run long enough that waiting for
+        _save() isn't practical -- builds arrays from copies of the
+        current lists rather than converting self.log in place, so
+        on_lane_state's own appends (and the eventual real _save())
+        are unaffected by this running concurrently on the executor."""
         if self.done or self.n_lane_state_msgs == 0:
             return
         snapshot = {k: np.array(v) for k, v in self.log.items()}
-        out_path = os.path.join(self.out_dir, f'{self.tag}_checkpoint_log.npz')
+        out_path = os.path.join(
+            self.out_dir, f'{self.tag}_checkpoint_log.npz')
         np.savez(out_path, **snapshot)
         laps_done = self.total_unwrapped_s / REFERENCE_TRACK.total_length
         self.get_logger().info(
-            f'checkpoint: {self.n_lane_state_msgs} msgs, {laps_done:.2f} laps, '
-            f'saved to {out_path}')
+            f'checkpoint: {self.n_lane_state_msgs} msgs, '
+            f'{laps_done:.2f} laps, saved to {out_path}')
 
 
 def main():
@@ -186,12 +191,14 @@ def main():
     ap.add_argument('--laps', type=float, default=3.0)
     ap.add_argument('--out-dir', default='/tmp')
     ap.add_argument('--tag', default='chain_run')
-    ap.add_argument('--checkpoint-interval', type=float, default=120.0,
-                     help='seconds between checkpoint saves, 0 to disable')
+    ap.add_argument(
+        '--checkpoint-interval', type=float, default=120.0,
+        help='seconds between checkpoint saves, 0 to disable')
     args = ap.parse_args()
 
     rclpy.init()
-    node = ChainMonitor(args.laps, args.out_dir, args.tag, args.checkpoint_interval)
+    node = ChainMonitor(
+        args.laps, args.out_dir, args.tag, args.checkpoint_interval)
     try:
         while rclpy.ok() and not node.done:
             rclpy.spin_once(node, timeout_sec=1.0)

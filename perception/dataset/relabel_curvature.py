@@ -27,10 +27,15 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from perception.dataset.track_definitions import REFERENCE_TRACK  # noqa: E402
-from perception.dataset.windowed_relabel import windowed_curvature_average  # noqa: E402
+from perception.dataset.track_definitions import (  # noqa: E402
+    REFERENCE_TRACK,
+)
+from perception.dataset.windowed_relabel import (  # noqa: E402
+    windowed_curvature_average,
+)
 
-DATASET_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "dataset_v0")
+DATASET_DIR = os.path.join(
+    os.path.dirname(__file__), "..", "..", "data", "dataset_v0")
 LABELS_PATH = os.path.join(DATASET_DIR, "labels.csv")
 BACKUP_PATH = os.path.join(DATASET_DIR, "labels_v0_pointwise.csv")
 
@@ -73,8 +78,10 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"Relabeled {n_base} base + {n_mirrored} mirrored = {len(rows)} rows.")
-    print(f"Wrote {LABELS_PATH} (old point-wise labels preserved at {BACKUP_PATH}).")
+    print(f"Relabeled {n_base} base + {n_mirrored} mirrored = "
+          f"{len(rows)} rows.")
+    print(f"Wrote {LABELS_PATH} (old point-wise labels preserved at "
+          f"{BACKUP_PATH}).")
 
 
 if __name__ == "__main__":

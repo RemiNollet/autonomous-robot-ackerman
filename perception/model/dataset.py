@@ -20,7 +20,9 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 
-from perception.model.preprocess import crop_and_resize, to_standardized_array, augment_image
+from perception.model.preprocess import (
+    crop_and_resize, to_standardized_array, augment_image,
+)
 from perception.model.targets import normalize_targets
 
 DATASET_DIR = "data/dataset_v0"
@@ -29,9 +31,11 @@ IMG_DIR = f"{DATASET_DIR}/images"
 
 
 class LaneDataset(Dataset):
-    def __init__(self, labels_csv: str = LABELS_CSV, img_dir: str = IMG_DIR,
-                 split: Optional[str] = None, mirrored: Optional[bool] = None,
-                 augment: bool = False, seed: int = 0, augment_params: Optional[dict] = None):
+    def __init__(
+            self, labels_csv: str = LABELS_CSV, img_dir: str = IMG_DIR,
+            split: Optional[str] = None, mirrored: Optional[bool] = None,
+            augment: bool = False, seed: int = 0,
+            augment_params: Optional[dict] = None):
         """
         split:    "train" / "val" / "test", or None for all splits.
         mirrored: True/False to keep only mirrored or only source rows, or
@@ -67,9 +71,11 @@ class LaneDataset(Dataset):
         arr = to_standardized_array(img)
 
         e_y, e_psi, kappa = normalize_targets(
-            float(row["lateral_error"]), float(row["heading_error"]), float(row["curvature"])
+            float(row["lateral_error"]), float(row["heading_error"]),
+            float(row["curvature"])
         )
         target = torch.tensor([e_y, e_psi, kappa], dtype=torch.float32)
-        valid = torch.tensor(1.0 if row["valid"] == "True" else 0.0, dtype=torch.float32)
+        valid = torch.tensor(
+            1.0 if row["valid"] == "True" else 0.0, dtype=torch.float32)
         image = torch.from_numpy(arr)
         return image, target, valid
