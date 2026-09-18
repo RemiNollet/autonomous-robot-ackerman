@@ -57,4 +57,3 @@ MUJOCO_LOG.TXT
 
 # --- Env / secrets ---
 .env
-*.mp4
