@@ -14,7 +14,8 @@ checkpoints/
 runs/
 wandb/
 
-# --- ONNX / quantized models (keep final ones intentionally, ignore intermediates) ---
+# --- ONNX / quantized models (ADR-28: regenerated from the checkpoint, not tracked) ---
+*.onnx
 *.onnx.tmp
 calibration_cache/
 

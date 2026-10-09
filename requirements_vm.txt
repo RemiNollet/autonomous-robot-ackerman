@@ -42,3 +42,10 @@ mujoco==3.12.0
 # written. Not resolvable via a plain `pip install -r` on a fresh VM --
 # see docs/decisions.md's M3 OCP formulation task for the acados
 # clone+build+install steps.
+
+# M4 (docs/decisions.md ADR-28): ONNX Runtime for the perception model's
+# inference path, pinned to the same version as requirements-sim.txt.
+# Deliberately NOT the `onnx` package: it pulls ml_dtypes, which upgrades
+# numpy 1.26.4 (apt, shared with the ROS2 stack) to 2.x inside this venv.
+# Export and validation run on the Mac only.
+onnxruntime==1.23.2

@@ -490,3 +490,21 @@ With `c2 = 0` on v0, these two formulations are **numerically identical** — th
 **Consequence:** `mpc_node.py`'s `on_lane_state` now health-gates before solving; `_decay_delta()` is the one shared fallback primitive both ADR-24 and this ADR call. `STALE_AGE_THRESHOLD_S`/`N_INVALID_CONSECUTIVE_THRESHOLD` are both explicitly flagged first-guess constants, not final — real tuning is the dedicated dropout-scenario task's job, not this one's. The full perception → MPC → bridge chain is still not wired end-to-end; that follows now that both this and ADR-26's `ros2 run` fix are resolved.
 
 **Artifacts:** `carsim_bridge/carsim_bridge/mpc_node.py`, `tests/test_mpc_node.py`.
+
+---
+
+## ADR-28 — ONNX export approach for the perception CNN (M4)
+
+**Context:** M4 requires an ONNX export of the perception CNN ahead of INT8 quantization. A read-only investigation confirmed export feasibility and surfaced blocking dependency gaps on both the Mac and the VM.
+
+**Decision:**
+- **Exporter:** the dynamo-based exporter (`torch.onnx.export(dynamo=True)`), not the legacy TorchScript path. It reuses the `torch.export` tracing already verified safe (clean op histogram, eager-vs-exported diff `0.0`), and is PyTorch's forward-supported path.
+- **Opset:** pinned explicitly to opset 20 (dynamo's resolved default) rather than left at `None`. Compatibility against the pinned ONNX Runtime version is re-verified in task 3.
+- **Axes:** batch fixed at 1, matching the real single-frame deployment path on the robot. H/W is structurally fixed at 80×160 by `fc1.in_features=1600` and cannot be made dynamic.
+- **Outputs:** export only the `(N,4)` prediction head. `b3_features` is dropped from the graph — it is not consumed by `perception_node` today.
+- **Standardization:** stays outside the graph per NFR-8, unchanged — the export script traces `forward()` as-is.
+- **Placement and versions:** export and validation run on the Mac only. `onnxruntime==1.23.2` is pinned on both machines (added to `requirements-sim.txt` and `requirements_vm.txt`); the Mac additionally gets `onnx==1.23.0` and `onnxscript==0.7.2` (added to `requirements-sim.txt` only). This avoids the numpy 1.26.4 → 2.5.3 upgrade the full `onnx` package would force on the ROS2 venv via `ml_dtypes`.
+- **Provenance:** the checkpoint md5 (`44d7c52202ba013cd86a7c12b971d402`, independently confirmed by reproducing ADR-18's metrics) is embedded as `metadata_props` in the exported ONNX file and recorded here, since no md5 of record existed anywhere before.
+- **Artifact tracking:** `.onnx` files are added to `.gitignore` (only `*.onnx.tmp` was excluded before), consistent with the existing checkpoint exclusion — regeneration is documented in the M4 pipeline write-up (task 7) instead.
+
+**Consequence:** nothing can run yet — `onnx` is absent on both machines; installing the pinned versions above is the first implementation step, not part of this investigation. Pillow differs between Mac (12.3.0) and VM (10.2.0); whether that affects preprocessing output bit-for-bit is unverified and matters for task 3's equivalence tolerance, not this export step.
